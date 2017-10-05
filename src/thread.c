@@ -37,7 +37,6 @@ struct lt_thread *lt_thread_add(struct lt_config_app *cfg, int fd, pid_t pid)
 
 	memset(t, 0x0, sizeof(*t));
 
-	t->fifo_fd = fd;
 	t->tid = pid;
 	gettimeofday(&t->tv_start, NULL);
 

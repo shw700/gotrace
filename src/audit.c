@@ -32,7 +32,6 @@
 #include <gnu/lib-names.h>
 #include <stdlib.h>
 #include <errno.h>
-#include <pthread.h>
 #include <sys/user.h>
 
 #include "config.h"
@@ -55,14 +54,6 @@ unsigned int thread_warning = 0;
 #define PKEY_ID_MARK_TLS	3
 
 int lt_thread_pkey_init = 0;
-static pthread_key_t lt_thread_pkey, lt_tsd_pkey;
-pid_t master_thread = 0;
-
-static __thread lt_tsd_t *this_tsd = NULL;
-
-static pthread_mutex_t tsd_lock = PTHREAD_MUTEX_INITIALIZER;
-
-lt_tsd_t *thread_get_tsd(int create);
 
 
 STATIC int check_names(char *name, char **ptr)
@@ -139,7 +130,7 @@ int sym_entry(const char *symname, void *ptr, char *lib_from, char *lib_to,
 	struct lt_symbol *sym = NULL;
 	int collapsed = 0, set_suppress_collapsed = 0, is_silent = 0;
 
-//	printf("XXX: SYM_ENTRY: %s\n", symname);
+//	fprintf(stderr, "XXX: SYM_ENTRY: %d / %s\n", target, symname);
 
 	XMALLOC_ASSIGN(argbuf, LR_ARGS_MAXLEN);
 	if (!argbuf)
@@ -150,12 +141,12 @@ int sym_entry(const char *symname, void *ptr, char *lib_from, char *lib_to,
 	PRINT_VERBOSE(&cfg, 2, "%s@%s\n", symname, lib_to);
 
 	// Make sure we keep track of recursive/repeated calls to ourselves.
-	if (tsd->suppress_while[0] && (tsd->suppress_collapsed != COLLAPSED_TERSE)) {
+/*	if (tsd->suppress_while[0] && (tsd->suppress_collapsed != COLLAPSED_TERSE)) {
 		if (!strcmp(tsd->suppress_while, symname))
 			tsd->suppress_nested++;
 
 		is_silent = 1;
-	}
+	}*/
 
 	/* XXX: This might have gotten completely screwed up */
 	if (tsd->suppress_while[0] && (!strcmp(tsd->suppress_while, symname)))
@@ -208,7 +199,7 @@ int sym_entry(const char *symname, void *ptr, char *lib_from, char *lib_to,
 
 	/* If symname is empty then all we care about is preserving the call stack depth */
 	if (*symname) {
-		lt_out_entry(cfg.sh, &tv, syscall(SYS_gettid), tsd->indent_depth, collapsed,
+		lt_out_entry(cfg.sh, &tv, target, tsd->indent_depth, collapsed,
 			symname, lib_to, lib_from, argbuf, argdbuf, &tsd->nsuppressed);
 	}
 
@@ -224,6 +215,14 @@ int sym_exit(const char *symname, void *ptr, char *lib_from, char *lib_to, pid_t
 	struct timeval tv;
 	struct lt_symbol *sym = NULL;
 	int collapsed = 0, is_silent = 0;
+
+	if (!ptr) {
+		lt_out_exit(cfg.sh, &tv, target,
+			tsd->indent_depth, collapsed,
+			symname, lib_to, lib_from,
+			argbuf, argdbuf, &tsd->nsuppressed);
+		return 0;
+	}
 
 	XMALLOC_ASSIGN(argbuf, LR_ARGS_MAXLEN);
 	if (!argbuf)
@@ -273,7 +272,7 @@ int sym_exit(const char *symname, void *ptr, char *lib_from, char *lib_to, pid_t
 		argret = lt_args_sym_exit(cfg.sh, sym, target, inregs, outregs, argbuf, LR_ARGS_MAXLEN, &argdbuf, is_silent, tsd);
 	}
 
-	lt_out_exit(cfg.sh, &tv, syscall(SYS_gettid),
+	lt_out_exit(cfg.sh, &tv, target,
 			tsd->indent_depth, collapsed,
 			symname, lib_to, lib_from,
 			argbuf, argdbuf, &tsd->nsuppressed);
@@ -332,25 +331,19 @@ SETSPECIFIC(pid_t tid, size_t idx, void *data, int *found) {
 	if (idx >= MAXIDX)
 		return -1;
 
-	pthread_mutex_lock(&tsd_lock);
-
 	for (t = 0; t < MAXPTIDS; t++) {
 
 		if ((thread_data[idx][t].tid == 0) || (thread_data[idx][t].tid == tid)) {
 			thread_data[idx][t].tid = tid;
 			thread_data[idx][t].data = data;
-			pthread_mutex_unlock(&tsd_lock);
 			return 0;
 		}
 
 	}
 
-	pthread_mutex_unlock(&tsd_lock);
 	return -1;
-//	return pthread_setspecific(lt_thread_pkey, data);
 }
 
-// XXX: probably doesn't require locking here
 STATIC void *
 GETSPECIFIC(pid_t tid, size_t idx, int *found) {
 	void *result = NULL;
@@ -361,8 +354,6 @@ GETSPECIFIC(pid_t tid, size_t idx, int *found) {
 
 	if (idx >= MAXIDX)
 		return NULL;
-
-	pthread_mutex_lock(&tsd_lock);
 
 	for (t = 0; t < MAXPTIDS; t++) {
 
@@ -377,31 +368,7 @@ GETSPECIFIC(pid_t tid, size_t idx, int *found) {
 
 	}
 
-	pthread_mutex_unlock(&tsd_lock);
 	return result;
-//	return pthread_getspecific(lt_thread_pkey);
-}
-
-STATIC
-int thread_tls_mark(pid_t tid, int set)
-{
-	int res = 0;
-	int found = 0;
-
-	if (set > 0) {
-		SETSPECIFIC(tid, PKEY_ID_MARK_TLS, (void *)1, &found);
-		return found;
-	} else if (set < 0) {
-		SETSPECIFIC(tid, PKEY_ID_MARK_TLS, (void *)0, &found);
-		return found;
-	}
-
-	res = (uintptr_t)GETSPECIFIC(tid, PKEY_ID_MARK_TLS, &found);
-
-	if (!found)
-		return 0;
-
-	return res;
 }
 
 void
@@ -411,28 +378,14 @@ setup_tsd_pkeys(void)
 	if (lt_thread_pkey_init != 0)
 		return;
 
-	master_thread = syscall(SYS_gettid);
-
-	pthread_key_create(&lt_thread_pkey, NULL);
-	if (pthread_key_create(&lt_thread_pkey, NULL) != 0) {
-		PERROR("Failed to create thread specific data");
-		lt_thread_pkey_init = -1;
-	} else if (pthread_key_create(&lt_tsd_pkey, NULL) != 0) {
-		PERROR("Failed to create thread specific data[2]:");
-		lt_thread_pkey_init = -1;
-	} else {
-//		pthread_setspecific(lt_thread_pkey, PKEY_VAL_INITIALIZED);
-//		pthread_setspecific(lt_thread_pkey, (void *)(unsigned long)master_thread);
-		SETSPECIFIC(master_thread, PKEY_ID_THREAD_STATE, (void *)(unsigned long)master_thread, NULL);
-		thread_get_tsd(2);
-		lt_thread_pkey_init = 1;
-	}
+//	thread_get_tsd(2);
+	lt_thread_pkey_init = 1;
 
 	return;
 }
 
 lt_tsd_t *
-thread_get_tsd(int create)
+thread_get_tsd(pid_t tid, int create)
 {
 	void *pkd;
 
@@ -442,8 +395,7 @@ thread_get_tsd(int create)
 	if (lt_thread_pkey_init <= 0)
 		return NULL;
 
-//	pkd = pthread_getspecific(lt_thread_pkey);
-	pkd = this_tsd;
+	pkd = GETSPECIFIC(tid, PKEY_ID_TSD, NULL);
 
 	if (!pkd && create) {
 		lt_tsd_t *tsd;
@@ -455,10 +407,9 @@ thread_get_tsd(int create)
 		}
 
 		memset(tsd, 0, sizeof(*tsd));
-		tsd->is_new = 1;
 		tsd->last_operation = -1;
-		this_tsd = pkd = tsd;
-//		pthread_setspecific(lt_thread_pkey, pkd);
+		pkd = tsd;
+		SETSPECIFIC(tid, PKEY_ID_TSD, tsd, NULL);
 	}
 
 	return pkd;

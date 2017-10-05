@@ -82,7 +82,7 @@ static FILE* open_include(struct lt_config_shared *cfg, char *file)
 	PRINT_VERBOSE(cfg, 1, "open failed [%s]: %s\n",
 			file, strerror(errno));
 
-	if ((env_dir = getenv("LT_HEADERS_DIR")))
+	if ((env_dir = getenv("GT_HEADERS_DIR")))
 		f = open_include_dir(cfg, file, env_dir);
 
 	if (f)

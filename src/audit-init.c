@@ -167,7 +167,7 @@ int init_custom_handlers(struct lt_config_audit *cfg)
 	}
 
 	if (!globdir) {
-		const char *gsrc = getenv("LT_TRANSFORMERS_DIR");
+		const char *gsrc = getenv("GT_TRANSFORMERS_DIR");
 		size_t gdsize;
 
 		if (!gsrc)

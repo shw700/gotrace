@@ -50,42 +50,50 @@ size_t saved_ret_prolog_nentries = 64;
 size_t saved_ret_prolog_entries = 0;
 saved_prolog_t *saved_ret_prologs = NULL;
 
+long trace_flags = PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACECLONE | PTRACE_O_TRACEVFORK |
+	PTRACE_O_TRACEFORK | PTRACE_O_TRACEEXEC | PTRACE_O_TRACEEXIT; /* PTRACE_O_TRACEVFORKDONE */
+
 struct lt_config_audit cfg;
 
 char *excluded_intercepts[] = {
 	// hmm:
-	"runtime.atomicstorep",
-	"runtime.(*waitq).dequeue",
-	"runtime.mallocgc",
-	"runtime.newobject",
-	"runtime.heapBitsSetType",
-	"runtime.heapBitsForSpan",
+//	"runtime.atomicstorep",
+//	"runtime.(*waitq).dequeue",
+//	"runtime.mallocgc",
+//	"runtime.newobject",
+//	"runtime.heapBitsSetType",
+//	"runtime.heapBitsForSpan",
+//	"runtime.(*mcache).refill",
 
-	"runtime.chanrecv",
-	"runtime.chanrecv1",
+//	"runtime.chanrecv",
+//	"runtime.chanrecv1",
 
-	"runtime.bgsweep",
-	"runtime.chansend",
-	"runtime.chansend1",
-	"runtime.forcegchelper",
-	"runtime.futexwakeup",
-	"runtime.gopark",
-	"runtime.goready",
-	"runtime.lock",
+//	"runtime.(*mcentral).cacheSpan",
+
+//	"runtime.bgsweep",
+//	"runtime.chansend",
+//	"runtime.chansend1",
+//	"runtime.forcegchelper",
+//	"runtime.futexwakeup",
+//	"runtime.gopark",
+//	"runtime.goready",
+//	"runtime.lock",
 //	"runtime.makechan",
-	"runtime.mcommoninit",
-	"runtime.netpollinited",
-	"runtime.notesleep",
-	"runtime.notewakeup",
-	"runtime.ready",
-	"runtime.runfinq",
-	"runtime.send",
-	"runtime.stopTheWorld",
-	"runtime.unlock"
+//	"runtime.mcommoninit",
+//	"runtime.netpollinited",
+//	"runtime.notesleep",
+//	"runtime.notewakeup",
+//	"runtime.ready",
+//	"runtime.runfinq",
+//	"runtime.send",
+//	"runtime.stopTheWorld",
+//	"runtime.unlock"
 };
 
 extern char *read_string_remote(pid_t pid, char *addr, size_t slen);
 
+void dump_wait_state(pid_t pid, int status, int force);
+int set_all_intercepts(pid_t pid);
 int set_intercept(pid_t pid, void *addr);
 int set_ret_intercept(pid_t pid, const char *fname, void *addr);
 
@@ -138,7 +146,10 @@ decode_param(pid_t pid, void *sp, golang_data_type dtype, void *pval) {
 	return NULL;
 }
 
-lt_tsd_t tsd;
+int
+is_pid_new(pid_t pid) {
+	return 1;
+}
 
 int
 handle_trace_trap(pid_t pid, int status) {
@@ -150,8 +161,36 @@ handle_trace_trap(pid_t pid, int status) {
 	size_t i, ra;
 	int is_return = 0;
 
-	if (!WIFSTOPPED(status) || (WSTOPSIG(status) != SIGTRAP))
+	if (!WIFSTOPPED(status) || (WSTOPSIG(status) != SIGTRAP)) {
+		dump_wait_state(pid, status, 1);
+		fprintf(stderr, "KEK\n");
+
+		if (WIFSTOPPED(status) && (WSTOPSIG(status) == SIGSTOP)) {
+			if (is_pid_new(pid)) {
+
+				if (ptrace(PTRACE_SETOPTIONS, pid, NULL, trace_flags) < 0) {
+					perror("ptrace(PTRACE_SETOPTIONS)111");
+					exit(EXIT_FAILURE);
+				}
+
+				if (set_all_intercepts(pid) < 0) {
+					fprintf(stderr, "Error encountered while setting intercepts in new process.\n");
+					exit(EXIT_FAILURE);
+				}
+
+				// We will return into a loop that will perform this action for us.
+/*				if (ptrace(PTRACE_CONT, pid, NULL, 0) < 0) {
+					perror("ptrace(PTRACE_CONT) [4]");
+					exit(EXIT_FAILURE);
+				} */
+
+				fprintf(stderr, "KEK2: %d\n", WSTOPSIG(status));
+				return 1;
+			}
+		}
+
 		return 0;
+	}
 
 	DEBUG_PRINT(2, "Handling trace trap!\n");
 
@@ -228,18 +267,16 @@ handle_trace_trap(pid_t pid, int status) {
 	}
 
 	lts = lt_symbol_bind(cfg.sh, hot_pc, symname);
+	lt_tsd_t *tsdx = thread_get_tsd(pid, 1);
 
 	if (is_return) {
 //		printf("RETURN BYPASS\n");
-
-	/*int ret = */sym_exit(symname, lts, "from", "to", pid, &regs, &regs, &tsd);
+	/*int ret = */sym_exit(symname, lts, "from", "to", pid, &regs, &regs, tsdx);
 		return 1;
 	}
 
-//	memset(&tsd, 0, sizeof(tsd));
-//	printf("lts = %p\n", lts);
-
-	/*int ret = */sym_entry(symname, lts, "from", "to", pid, &regs, &tsd);
+//	fprintf(stderr, "HEH: %d / %s / %p\n", pid, symname, tsdx);
+	/*int ret = */sym_entry(symname, lts, "from", "to", pid, &regs, tsdx);
 
 	if (ptrace(PTRACE_SINGLESTEP, pid, 0, 0) < 0) {
 		perror("ptrace(PTRACE_SINGLESTEP)");
@@ -270,10 +307,14 @@ handle_trace_trap(pid_t pid, int status) {
 }
 
 void
-dump_wait_state(int status) {
+dump_wait_state(pid_t pid, int status, int force) {
 	int dbg_level = 1;
+	int needs_pid = 0;
 
-	DEBUG_PRINT(dbg_level, "Wait status: ");
+	if (force)
+		dbg_level = 0;
+
+	DEBUG_PRINT(dbg_level, "Wait status (%d): ", pid);
 
 	if (WIFEXITED(status))
 		DEBUG_PRINT(dbg_level, "exited=true/status=%d ", WEXITSTATUS(status));
@@ -293,6 +334,60 @@ dump_wait_state(int status) {
 		DEBUG_PRINT(dbg_level, "continued=true");
 
 	DEBUG_PRINT(dbg_level, "\n");
+
+	if (WIFSIGNALED(status)) {
+		siginfo_t si;
+
+		// PTRACE_PEEKSIGINFO
+		if (ptrace(pid, PTRACE_GETSIGINFO, NULL, &si) < 0) {
+			perror("ptrace(PTACE_GETSIGINFO)");
+		} else {
+			DEBUG_PRINT(dbg_level, "si_code=%d, si_pid=%d, si_uid=%d, si_status=%d, si_addr=%p, "
+				"si_call_addr=%p, si_syscall=%d\n",
+				si.si_code, si.si_pid, si.si_uid, si.si_status, si.si_addr,
+				si.si_call_addr, si.si_syscall);
+		}
+	}
+
+	if ((status >> 8) == (SIGTRAP | (PTRACE_EVENT_CLONE << 8))) {
+		PRINT_ERROR("%s", "Detected clone() event\n");
+		needs_pid = 1;
+	}
+	else if ((status >> 8) == (SIGTRAP | (PTRACE_EVENT_EXEC << 8)))
+		PRINT_ERROR("%s", "Detected exec() event\n");
+	else if ((status >> 8) == (SIGTRAP | (PTRACE_EVENT_EXIT << 8))) {
+		lt_tsd_t *tsdx = thread_get_tsd(pid, 1);
+
+		PRINT_ERROR("%s", "Detected exit() event\n");
+		sym_exit("___________exit", NULL, "from", "to", pid, NULL, NULL, tsdx);
+	}
+	else if ((status >> 8) == (SIGTRAP | (PTRACE_EVENT_FORK << 8))) {
+		PRINT_ERROR("%s", "Detected fork() event\n");
+		needs_pid = 1;
+	}
+	else if ((status >> 8) == (SIGTRAP | (PTRACE_EVENT_VFORK << 8))) {
+		PRINT_ERROR("%s", "Detected vfork() event\n");
+		needs_pid = 1;
+	} else if ((status >> 8) == (SIGTRAP | (PTRACE_EVENT_VFORK_DONE << 8)))
+		PRINT_ERROR("%s", "Detected vfork() event\n");
+
+	if (needs_pid) {
+		unsigned long msg;
+
+		if (ptrace(PTRACE_GETEVENTMSG, pid, NULL, &msg) < 0) {
+			perror("ptrace(PTACE_GETEVENTMSG)");
+			exit(EXIT_FAILURE);
+		}
+
+		PRINT_ERROR("event new pid = %d\n", (int)msg);
+	}
+
+	// PTRACE_O_TRACESYSGOOD?
+	if (WSTOPSIG(status) & 0x80) {
+		PRINT_ERROR("%s", "Unchecked delivery of SIGTRAP|0x80. Aborting.\n");
+		exit(EXIT_FAILURE);
+	}
+
 	return;
 }
 
@@ -413,13 +508,12 @@ trace_init(void) {
 	return 0;
 }
 
-
 int
 child_trace_program(const char *progname, char * const *args) {
 
 	if (prctl(PR_SET_PTRACER, getppid()) < 0) {
 		perror("prctl(PR_SET_PTRACER)");
-		exit(EXIT_FAILURE);
+//		exit(EXIT_FAILURE);
 	}
 
 	if (ptrace(PTRACE_TRACEME, NULL, 0, 0) < 0) {
@@ -435,6 +529,51 @@ child_trace_program(const char *progname, char * const *args) {
 	exit(EXIT_FAILURE);
 }
 
+int
+set_all_intercepts(pid_t pid) {
+	size_t i;
+
+	for (i = 0; i < sizeof(symbol_store)/sizeof(symbol_store[0]); i++) {
+		if (symbol_store[i].l) {
+
+//		#define MAXJ 	453
+		#define MAXJ	2000	
+		printf("HEH: MAXJ = %s\n", symbol_store[i].map[MAXJ].name);
+			for (size_t j = 0; j < symbol_store[i].msize; j++) {
+//				printf("CANDIDATE: %s - %lx\n", symbol_store[i].map[j].name, symbol_store[i].map[j].addr);
+
+				if (is_intercept_excluded(symbol_store[i].map[j].name)) {
+					fprintf(stderr, "Skipping over excluded intercept: %s\n", symbol_store[i].map[j].name);
+					continue;
+				}
+
+				if (j > MAXJ) {
+
+				switch(symbol_store[i].map[j].addr) {
+				case (long)ADDR_SOMEFUNC:
+				case (long)ADDR_SOMEFUNC2:
+				case (long)ADDR_SOMEFUNC3:
+				case (long)ADDR_SOMEFUNC4:
+				case (long)ADDR_SOMEFUNC5:
+					break;
+				default:
+					continue;
+				}
+	}
+
+				if (set_intercept(pid, (void *)symbol_store[i].map[j].addr) < 0) {
+					fprintf(stderr, "Error: could not set intercept on symbol: %s\n", symbol_store[i].map[j].name);
+					return -1;
+				}
+			}
+
+		}
+
+	}
+
+	printf("Set intercepts.\n");
+	return 0;
+}
 
 int
 trace_program(const char *progname, char * const *args) {
@@ -467,12 +606,17 @@ trace_program(const char *progname, char * const *args) {
 		perror("waitpid");
 		exit(EXIT_FAILURE);
 	}
-	dump_wait_state(wait_status);
 
-	printf("Parrent attached\n");
+	if (ptrace(PTRACE_SETOPTIONS, pid, NULL, trace_flags) < 0) {
+		perror("ptrace(PTRACE_SETOPTIONS)111");
+		exit(EXIT_FAILURE);
+	}
+	dump_wait_state(pid, wait_status, 0);
+
+	printf("Parent attached\n");
 
 	if (ptrace(PTRACE_CONT, pid, NULL, 0) < 0) {
-		perror("ptrace(PTRACE_CONT)");
+		perror("ptrace(PTRACE_CONT) [3]");
 		exit(EXIT_FAILURE);
 	}
 
@@ -480,71 +624,47 @@ trace_program(const char *progname, char * const *args) {
 		perror("waitpid");
 		exit(EXIT_FAILURE);
 	}
-	dump_wait_state(wait_status);
+	dump_wait_state(pid, wait_status, 0);
 	handle_trace_trap(pid, wait_status);
 
 	printf("Parent detected possible exec\n");
 
-	for (size_t i = 0; i < sizeof(symbol_store)/sizeof(symbol_store[0]); i++) {
-		if (symbol_store[i].l) {
-
-//		#define MAXJ 	453
-		#define MAXJ 	189
-		printf("HEH: MAXJ = %s\n", symbol_store[i].map[MAXJ].name);
-			for (size_t j = 0; j < symbol_store[i].msize; j++) {
-//				printf("CANDIDATE: %s - %lx\n", symbol_store[i].map[j].name, symbol_store[i].map[j].addr);
-
-				if (is_intercept_excluded(symbol_store[i].map[j].name)) {
-					fprintf(stderr, "Skipping over excluded intercept: %s\n", symbol_store[i].map[j].name);
-					continue;
-				}
-
-				if (j > MAXJ) {
-
-				switch(symbol_store[i].map[j].addr) {
-				case (long)ADDR_SOMEFUNC:
-				case (long)ADDR_SOMEFUNC2:
-				case (long)ADDR_SOMEFUNC3:
-				case (long)ADDR_SOMEFUNC4:
-				case (long)ADDR_SOMEFUNC5:
-					break;
-				default:
-					continue;
-				}
+	if (set_all_intercepts(pid) < 0) {
+		fprintf(stderr, "Error encountered while setting intercepts.\n");
+		exit(EXIT_FAILURE);
 	}
 
-				if (set_intercept(pid, (void *)symbol_store[i].map[j].addr) < 0) {
-					fprintf(stderr, "Error: could not set intercept on symbol: %s\n", symbol_store[i].map[j].name);
-					exit(EXIT_FAILURE);
-				}
-			}
-
-		}
-
-	}
-
-	printf("Set intercept.\n");
 	dump_intercepts();
 
 	printf("Running loop...\n");
 
+	if (ptrace(PTRACE_CONT, pid, NULL, 0) < 0) {
+		perror("ptrace(PTRACE_CONT) [1]");
+		exit(EXIT_FAILURE);
+	}
+
 	while (1) {
+		pid_t cpid;
 
-		if (ptrace(PTRACE_CONT, pid, NULL, 0) < 0) {
-			perror("ptrace(PTRACE_CONT)");
-			exit(EXIT_FAILURE);
-		}
-
-		if (waitpid(pid, &wait_status, 0) < 0) {
+		if ((cpid = waitpid(-1, &wait_status, 0)) < 0) {
 			perror("waitpid");
 			exit(EXIT_FAILURE);
 		}
-		dump_wait_state(wait_status);
-		handle_trace_trap(pid, wait_status);
+		dump_wait_state(cpid, wait_status, 0);
 
-		if (WIFEXITED(wait_status) || (WIFSTOPPED(wait_status) && (WSTOPSIG(wait_status) != SIGTRAP))) {
+		if (handle_trace_trap(cpid, wait_status) < 1) {
+			fprintf(stderr, "Error: something bad happened while handling trace trap\n");
+		}
+
+//		if (WIFEXITED(wait_status) || (WIFSTOPPED(wait_status) && (WSTOPSIG(wait_status) != SIGTRAP))) {
+		if (WIFEXITED(wait_status)) {
 			fprintf(stderr, "Aborting loop.\n");
 			return 0;
+		}
+
+		if (ptrace(PTRACE_CONT, cpid, NULL, 0) < 0) {
+			perror("ptrace(PTRACE_CONT) [2]");
+			exit(EXIT_FAILURE);
 		}
 
 	}
@@ -572,7 +692,7 @@ main(int argc, char *argv[]) {
         cfg_sh.timestamp = 0;
         cfg_sh.hide_tid = 0;
         cfg_sh.indent_sym = 1;
-        cfg_sh.indent_size = 2;
+        cfg_sh.indent_size = 1;
         cfg_sh.fmt_colors = 1;
         cfg_sh.braces = 1;
         cfg_sh.resolve_syms = 1;

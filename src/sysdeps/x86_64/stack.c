@@ -365,8 +365,8 @@ STATIC void *get_value_mem(struct lt_config_shared *cfg, struct lt_arg *arg,
 STATIC void *get_value_reg_integer(struct lt_config_shared *cfg,
 			struct lt_arg *arg, void *regs, int ret)
 {
-	struct user_regs_struct *regs_ret = regs;
-	struct user_regs_struct *regs_in  = regs;
+//	struct user_regs_struct *regs_ret = regs;
+//	struct user_regs_struct *regs_in  = regs;
 	void *pval  = NULL;
 	long offset = ARCH_GET_OFFSET(arg);
 	long qoff   = offset % sizeof(long);
@@ -472,6 +472,9 @@ STATIC void* get_value(struct lt_config_shared *cfg, struct lt_arg *arg, pid_t t
 	if (arg->type_id == LT_ARGS_TYPEID_STRING) {
 		char *str;
 		long slen;
+
+		if (!val)
+			return strdup("");
 
 		errno = 0;
 
@@ -835,13 +838,13 @@ int lt_stack_process_ret(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 
 		ret_offset += sizeof(void *);
 
-		if (arg->type_id == LT_ARGS_TYPEID_STRING)
+		if (arg->type_id == LT_ARGS_TYPEID_STRING) {
 			ret_offset += sizeof(void *);
+		}
 	}
 
 	arg = asym->args[LT_ARGS_RET];
 	pval = get_value(cfg, arg, target, regs, ret_offset, 1, NULL, &is_err);
-//printf("lol pval = %p\n", pval);
 	needs_callstack = ((asym->args[LT_ARGS_RET]->latrace_custom_func_transformer != NULL) ||
 		(asym->args[LT_ARGS_RET]->latrace_custom_func_intercept != NULL));
 

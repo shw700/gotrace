@@ -61,33 +61,23 @@ typedef struct lt_tsd {
 	char *fault_reason;
 
 	int ass_integer;
-	int ass_sse;
 	int ass_memory;
 
 	fn_call_t *xfm_call_stack;
 	size_t xfm_call_stack_max;
 	size_t xfm_call_stack_sz;
 
-	int pipe_fd;
 	int indent_depth;
 	int flow_below_stack;
 
 	char *excised;
 
-	void *stack_start;
-	void *stack_end;
-
-	int is_new;
 } lt_tsd_t;
 
-#define TSD_SET(memb,val)	do { if (tsd) tsd->memb = val; } while (0)
-#define TSD_GET(memb,defval)	(tsd ? tsd->memb : defval)
-extern lt_tsd_t *thread_get_tsd(int create);
+extern lt_tsd_t *thread_get_tsd(pid_t tid, int create);
 
 
-#ifdef CONFIG_ARCH_HAVE_ARGS
 #include "args.h"
-#endif
 
 #ifdef __GNUC__
 #define NORETURN __attribute__((__noreturn__))
@@ -148,25 +138,18 @@ struct lt_config_shared {
 	struct hsearch_data args_tab;
 
 	int disabled;
-	int ctl_config;
 	int verbose;
 	int timestamp;
 	int debug;
-	int run_in_gdb;
 	int indent_sym;
 	int indent_size;
 	int braces;
-	int lib_short;
-	int src_lib_pfx;
 	int fmt_colors;
 	int resolve_syms;
 	int counts;
-	int pipe;
 	int hide_tid;
 	int not_follow_exec;
 	int not_follow_fork;
-	int framesize_check;
-	unsigned int framesize;
 	int global_symbols;
 
 	/* for 'not_follow_fork' */
@@ -190,10 +173,6 @@ struct lt_config_app {
 	int arg_num;
 
 	int csort;
-
-	int  output_tty;
-	int  output_tty_fd;
-	char output_tty_file[LT_MAXFILE];
 
 	struct lt_thread *threads;
 	struct lt_thread *iter;
@@ -244,7 +223,6 @@ struct lt_config_ln {
 
 struct lt_thread {
 	/* global */
-	int fifo_fd;
         pid_t tid;
 
 	int indent_depth;

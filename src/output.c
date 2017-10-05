@@ -258,6 +258,8 @@ int lt_out_entry(struct lt_config_shared *cfg,
 	char *outbuf = NULL;
 	int buffered;
 
+//	fprintf(stderr, "lt_out_entry: %s / %d\n", symname, tid);
+
 	lib_to = "";
 
 	buffered = (collapsed > 0);
@@ -276,6 +278,8 @@ int lt_out_entry(struct lt_config_shared *cfg,
 
 		if (!cfg->hide_tid)
 			FPRINT_TID(tid);
+//		fprintf(cfg->fout, "%d ", indent_depth);
+	indent_depth = 0;
 
 		if (indent_depth && cfg->indent_sym)
 			fprintf(cfg->fout, "%.*s", indent_depth * cfg->indent_size, spaces);
@@ -294,6 +298,7 @@ int lt_out_entry(struct lt_config_shared *cfg,
 		(*nsuppressed)++;
 		return 0;
 	}
+//	fprintf(stderr, "lt_out_entry 1: %s / %d\n", symname, tid);
 
 	if (collapsed == COLLAPSED_NESTED) {
 		PRINT_DATA(buffered, "%s()", symname);
@@ -305,6 +310,7 @@ int lt_out_entry(struct lt_config_shared *cfg,
 
 		return 0;
 	}
+//	fprintf(stderr, "lt_out_entry 2: %s / %d\n", symname, tid);
 
 	if (cfg->timestamp && tv) {
 		if (buffered)
@@ -320,6 +326,7 @@ int lt_out_entry(struct lt_config_shared *cfg,
 		else
 			FPRINT_TID(tid);
 	}
+//		fprintf(cfg->fout, "%d ", indent_depth);
 
 	/* Print indentation. */
 	if (indent_depth && cfg->indent_sym) {
@@ -327,31 +334,8 @@ int lt_out_entry(struct lt_config_shared *cfg,
 		if (cfg->fmt_colors)
 			cur_color = color_table[indent_depth % (sizeof(color_table)/sizeof(color_table[0]))];
 
+	indent_depth %= 20;
 		PRINT_DATA(buffered, "%.*s", indent_depth * cfg->indent_size, spaces);
-	}
-
-	if (lt_sh(cfg, src_lib_pfx)) {
-		char *fmt_on = "", *fmt_off = "";
-
-		if (cfg->fmt_colors) {
-			fmt_on = BOLD;
-			fmt_off = BOLDOFF;
-		}
-
-		if (!lib_from || !*lib_from)
-			lib_from = "";
-		else {
-			char *chrptr = strrchr(lib_from, '/');
-
-			if (chrptr)
-				lib_from = ++chrptr;
-
-			if ((chrptr = strchr(lib_from, '.')))
-				*chrptr = 0;
-
-		}
-
-		PRINT_DATA(buffered, "%s%s:%s", fmt_on, lib_from, fmt_off);
 	}
 
 	if (collapsed == COLLAPSED_BARE)
@@ -398,10 +382,17 @@ int lt_out_exit(struct lt_config_shared *cfg,
 			char *argdbuf, size_t *nsuppressed)
 {
 	const char *cur_color = NULL;
+	char msgbuf[128];
 	char *prefix;
+	int exited = 0;
 
 	if (!argbuf) {
 		argbuf = "";
+	}
+
+	if (!strcmp(symname, "___________exit")) {
+		snprintf(msgbuf, sizeof(msgbuf), "Thread exited: %d", tid);
+		exited = 1;
 	}
 
 	if ((prefix = pop_output_data(tid))) {
@@ -439,13 +430,16 @@ int lt_out_exit(struct lt_config_shared *cfg,
 	if ((!cfg->hide_tid) && (collapsed <= COLLAPSED_BASIC))
 		FPRINT_TID(tid);
 
+//	fprintf(cfg->fout, "%d ", indent_depth);
+
 	/* Print indentation. */
 	if (indent_depth && cfg->indent_sym) {
 
 		if (cfg->fmt_colors)
 			cur_color = color_table[indent_depth % (sizeof(color_table)/sizeof(color_table[0]))];
 
-		if (collapsed <= COLLAPSED_BASIC)
+	indent_depth %= 20;
+		if ((collapsed <= COLLAPSED_BASIC) && !exited)
 			fprintf(cfg->fout, "%.*s", indent_depth * cfg->indent_size, spaces);
 	}
 
@@ -456,10 +450,16 @@ int lt_out_exit(struct lt_config_shared *cfg,
 	}
 
 	if (!strcmp(argbuf, " = "))
-		memset(argbuf, 0, 3);
+		strcpy(argbuf, ";");
 
+	if (exited) {
+		if (cur_color)
+			fprintf(cfg->fout, "%s%s%s%s\n", BOLD, RED, msgbuf, RESET);
+		else
+			fprintf(cfg->fout, "%s\n", msgbuf);
+	}
 	/* Print the symbol and arguments. */
-	if (collapsed <= COLLAPSED_BASIC) {
+	else if (collapsed <= COLLAPSED_BASIC) {
 		if (cur_color)
 			fprintf(cfg->fout, "} %s%s%s%s%s\n", BOLD, cur_color, symname, RESET, argbuf);
 		else

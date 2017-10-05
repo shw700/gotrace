@@ -1284,7 +1284,7 @@ int lt_args_init(struct lt_config_shared *cfg)
 	cfg->sh = cfg;
 
 	if (!file) {
-		char *env_dir = getenv("LT_HEADERS_DIR");
+		char *env_dir = getenv("GT_HEADERS_DIR");
 
 		if (env_dir) {
 			size_t fsize = strlen(env_dir) + 16;
@@ -1294,7 +1294,7 @@ int lt_args_init(struct lt_config_shared *cfg)
 				return -1;
 
 			memset(file, 0, fsize);
-			snprintf(file, fsize, "%s/latrace.h", env_dir);
+			snprintf(file, fsize, "%s/gotrace.h", env_dir);
 		} else
 			file = LT_CONF_HEADERS_FILE;
 	}
@@ -1534,7 +1534,7 @@ do {                                                                 \
 
 		strncpy(argbuf, numbuf, alen);
 	} else if (arg->fmt && (!strcmp(arg->fmt, "p"))) {
-		if (*((void **)pval) == NULL)
+		if (pval == NULL)
 			len = snprintf(argbuf, alen, "nil");
 		else
 			ARGS_SPRINTF("%p", void *);
