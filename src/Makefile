@@ -47,11 +47,12 @@ $(GOTRACE_BIN): $(GOTRACE_OBJS)
 	$(QUIET_LD)$(CC) $(CFLAGS) $(GOTRACE_LDFLAGS) -o $@ $^ $(GOTRACE_LIBS)
 
 
+CPPFLAGS+=-I./zydis/include -I./zydis/build
 CPPFLAGS+=-DCONFIG_LIBDIR=\"$(libdir)\"
-CPPFLAGS+=-DLT_CONF_DIR=\"$(sysconfdir)/latrace.d\"
-#CPPFLAGS+=-DLT_CONF_HEADERS_DIR=\"$(sysconfdir)/latrace.d/headers\"
-CPPFLAGS+=-DLT_CONF_TRANSFORMERS_DIR=\"$(sysconfdir)/latrace.d/transformers\"
-#CPPFLAGS+=-DLT_CONF_HEADERS_FILE=\"$(sysconfdir)/latrace.d/headers/latrace.h\"
+CPPFLAGS+=-DLT_CONF_DIR=\"$(sysconfdir)/gotrace.d\"
+#CPPFLAGS+=-DLT_CONF_HEADERS_DIR=\"$(sysconfdir)/gotrace.d/headers\"
+CPPFLAGS+=-DLT_CONF_TRANSFORMERS_DIR=\"$(sysconfdir)/gotrace.d/transformers\"
+#CPPFLAGS+=-DLT_CONF_HEADERS_FILE=\"$(sysconfdir)/gotrace.d/headers/gotrace.h\"
 # no dependency for flex and bison definitions
 OBJS_DEPS_OMIT+=\
 	src/config-flex.o

@@ -60,22 +60,6 @@ do { \
 	YYERROR; \
 } while(0)
 
-#define CHK_TYPEDEF(ret, base, new, pointer) \
-do { \
-	switch(ret) { \
-	case -1: \
-		ERROR("unknown typedef - %s%s%s\n", base, (pointer ? "* " : " "), new); \
-		break; \
-	case  1: \
-		ERROR("typedef already defined - %s%s%s\n", base, (pointer ? "* " : " "), new); \
-		break; \
-	case  2: \
-		ERROR("typedef limit reached(%d) - %s%s%s\n", \
-		         LT_ARGS_DEF_TYPEDEF_NUM, base, (pointer ? "* " : " "), new); \
-		break; \
-	}; \
-} while(0)
-
 #define GET_LIST_HEAD(head) \
 do { \
  	if (NULL == (head = (struct lt_list_head*) malloc(sizeof(*head)))) \
@@ -86,7 +70,7 @@ do { \
 %}
 
 
-%token NAME FILENAME FUNC STRUCT ENUM TYPEDEF INCLUDE END POINTER ATTRIBUTE
+%token NEWLINE NAME FILENAME FUNC STRUCT CONST INCLUDE END POINTER ATTRIBUTE
 
 %union
 {
@@ -100,15 +84,19 @@ do { \
 %type <s>         NAME
 %type <s>         POINTER
 %type <s>         FILENAME
+%type <s>         NEWLINE
 %type <head>      STRUCT_DEF
-%type <head>      ENUM_DEF
+%type <head>      CONST_DEF
 %type <s>         ENUM_REF
-%type <enum_elem> ENUM_ELEM
+%type <enum_elem> CONST_ELEM
 %type <head>      ARGS
 %type <arg>       DEF
+%type <arg>       XDEF
 
 %%
 entry: 
+entry blank_space
+|
 entry struct_def
 |
 entry enum_def
@@ -116,8 +104,6 @@ entry enum_def
 entry gofunc_def
 |
 entry func_def
-|
-entry type_def
 |
 entry include_def
 |
@@ -128,6 +114,11 @@ entry END
 }
 |
 /* left blank intentionally */
+
+blank_space:
+NEWLINE
+{
+}
 
 /* struct definitions */
 struct_def:
@@ -176,40 +167,53 @@ STRUCT_DEF DEF ';'
 
 /* enum definitions */
 enum_def:
-ENUM NAME '{' ENUM_DEF '}' ';'
+CONST NAME '(' CONST_DEF NEWLINE
 {
 	switch(lt_args_add_enum(scfg, $2, 0, $4)) {
 	case -1:
-		ERROR("failed to add enum[1] %s\n", $2);
+		ERROR("failed to add const[1] %s\n", $2);
 	case 1:
-		ERROR("enum limit reached(%d) - %s\n", LT_ARGS_DEF_STRUCT_NUM, $2);
+		ERROR("const limit reached(%d) - %s\n", LT_ARGS_DEF_STRUCT_NUM, $2);
 	};
 }
 
-ENUM_DEF:
-ENUM_DEF ',' ENUM_ELEM
+CONST_DEF:
+CONST_DEF NEWLINE CONST_ELEM
 {
 	struct lt_enum_elem *enum_elem = $3;
 	struct lt_list_head *h = $1;
 
-	lt_list_add_tail(&enum_elem->list, h);
+	if (!h) {
+		GET_LIST_HEAD(h);
+	}
+	if (enum_elem)
+		lt_list_add_tail(&enum_elem->list, h);
 	$$ = h;
 }
-| ENUM_ELEM
+| CONST_ELEM
 {
 	struct lt_list_head *h;
 	struct lt_enum_elem *enum_elem = $1;
 
-	GET_LIST_HEAD(h);
-	lt_list_add_tail(&enum_elem->list, h);
-	$$ = h;
+	if (enum_elem) {
+		GET_LIST_HEAD(h);
+		lt_list_add_tail(&enum_elem->list, h);
+		$$ = h;
+	} else {
+		$$ = NULL;
+	}
 }
 
-ENUM_ELEM:
+CONST_ELEM:
 NAME '=' NAME
 {
-	if (NULL == ($$ = lt_args_get_enum(scfg, $1, $3)))
-		ERROR("failed to add enum[2] '%s = %s'\n", $1, $3);
+	char *startval = $3;
+
+	if (!strcmp(startval, "iota"))
+		startval = "0";
+
+	if (NULL == ($$ = lt_args_get_enum(scfg, $1, startval)))
+		ERROR("failed to add const[2] '%s = %s'\n", $1, startval);
 }
 |
 NAME
@@ -217,56 +221,21 @@ NAME
 	if (NULL == ($$ = lt_args_get_enum(scfg, $1, NULL)))
 		ERROR("failed to add enum[3] '%s = undef'\n", $1);
 }
-| EMPTY_COMMA
+|
+')' NEWLINE
 {
+	$$ = NULL;
+}
+|
+EMPTY_COMMA
+{
+	$$ = NULL;
 }
 
 
 EMPTY_COMMA:
  /* empty */
 
-
-type_def:
-TYPEDEF NAME NAME ';'
-{
-	int ret = lt_args_add_typedef(scfg, $2, $3, 0);
-	CHK_TYPEDEF(ret, $2, $3, 0);
-}
-|
-TYPEDEF NAME NAME NAME ';'
-{
-	char *tokname;
-	size_t toklen, i;
-	int found = 0;
-
-	toklen = strlen($2) + strlen($3) + 2;
-	tokname = alloca(toklen);
-	memset(tokname, 0, toklen);
-	snprintf(tokname, toklen, "%s %s", $2, $3);
-
-	for (i = 0; i < sizeof(typedef_mapping_table)/sizeof(typedef_mapping_table[0]); i++) {
-		if (!strcmp(typedef_mapping_table[i][0], tokname)) {
-			int ret = lt_args_add_typedef(scfg, typedef_mapping_table[i][1], $4, 0);
-			CHK_TYPEDEF(ret, typedef_mapping_table[i][1], $4, 0);
-			found = 1;
-			break;
-		}
-	}
-
-	if (!found)
-		ERROR("unknown complex typedef - %s\n", tokname);
-
-}
-|
-TYPEDEF NAME POINTER NAME ';'
-{
-	int ret;
-	int ptrno = strlen($3);
-
-	free($3);
-	ret = lt_args_add_typedef(scfg, $2, $4, ptrno);
-	CHK_TYPEDEF(ret, $2, $4, 1);
-}
 
 gofunc_def:
 FUNC NAME '(' ARGS ')' ';' ';'
@@ -303,18 +272,50 @@ FUNC NAME '(' ARGS ')' ';' ';'
 
 /* function definitions */
 func_def:
-DEF '(' ARGS ')' ';'
+XDEF '(' ARGS ')' NAME
 {
-	struct lt_arg *arg = $1;
+	struct lt_arg *farg = $1, *arg;
+
+	// Now handle the return type
+	if (!(arg = find_arg(scfg, $5, args_def_pod, LT_ARGS_DEF_POD_NUM, 0))) {
+
+		if (!(arg = lt_args_getarg(scfg, "void", ANON_PREFIX, 1, 1, NULL))) {
+			ERROR("unknown error[1] parsing return variable of type: %s\n", $5);
+		}
+	} else {
+		arg = lt_args_getarg(scfg, $5, "ret", 0, 1, NULL);
+	}
+
+	if (!arg) {
+			ERROR("unknown error[2] parsing return variable of type: %s\n", $5);
+	}
+
+
+	// Swap the first argument with the last
+	// But we do need to preserve some information first
+	arg->name ? free(arg->name) : arg->name;
+	arg->fmt ? free(arg->fmt) : arg->fmt;
+	arg->bitmask_class ? free(arg->bitmask_class) : arg->bitmask_class;
+
+	arg->name = farg->name;
+	arg->fmt = farg->fmt;
+	arg->bitmask_class = farg->bitmask_class;
+	arg->collapsed = farg->collapsed;
+	arg->latrace_custom_struct_transformer = farg->latrace_custom_struct_transformer;
+	arg->latrace_custom_func_transformer = farg->latrace_custom_func_transformer;
+	arg->latrace_custom_func_intercept = farg->latrace_custom_func_intercept;
+
+	free(farg);
+	farg = arg;
 
 	if (lt_args_add_sym(scfg, arg, $3, arg->collapsed))
 		ERROR("failed to add symbol %s\n", arg->name);
 
-	/* force creation of the new list head */
+	// force creation of the new list head
 	$3 = NULL;
 }
 |
-DEF '(' ARGS ')' ATTRIBUTE ';'
+XDEF '(' ARGS ')'
 {
 	struct lt_arg *arg = $1;
 
@@ -430,24 +431,19 @@ NAME NAME NAME ENUM_REF
 |
 NAME NAME ENUM_REF
 {
-//	char *swap;
-//	swap = $2;
-//	$2 = $1;
-//	$1 = swap;
-	if (!strcmp($1, "func"))
-		$1 = "void";
-
-//printf("HMMM: %s | %s\n", $1, $2);
 	struct lt_arg *arg;
 
-	if (NULL == (arg = lt_args_getarg(scfg, $1, $2, 0, 1, $3))) {
-		if (getenum(scfg, $1) == NULL) {
-			if (getenum_bm(scfg, $1) == NULL)
-				ERROR("unknown argument type[2a] - %s; possibly due to enum specification of \"%s\"\n", $1, $3);
+	if (NULL == (arg = lt_args_getarg(scfg, $2, $1, 0, 1, $3))) {
+		if (getenum(scfg, $2) == NULL) {
+			if (getenum_bm(scfg, $2) == NULL) {
+				if (NULL == (arg = lt_args_getarg(scfg, "void", $1, 1 /*ptrno*/, 1, $3))) {
+					ERROR("unknown argument type[2A] - %s; possibly due to enum specification of \"%s\"\n", $2, $3);
+				}
+			}
 		}
 
-		if (NULL == (arg = lt_args_getarg(scfg, "int", $2, 0, 1, $1)))
-			ERROR("unknown argument type[2b] - %s; possibly due to enum specification of \"%s\"\n", $1, $3);
+		if (!arg && (NULL == (arg = lt_args_getarg(scfg, "int", $1, 0, 1, $2))))
+			ERROR("unknown argument type[2b] - %s; possibly due to enum specification of \"%s\"\n", $2, $3);
 	}
 
 	$$ = arg;
@@ -458,11 +454,13 @@ NAME POINTER NAME ENUM_REF
 	struct lt_arg *arg;
 	int ptrno = strlen($2);
 
+//	fprintf(stderr, "HEH: %s  / %s\n", $1, $3);
+
 	free($2);
 
-	if (NULL == (arg = lt_args_getarg(scfg, $1, $3, ptrno, 1, $4))) {
-		if (NULL == (arg = lt_args_getarg(scfg, "void", $3, ptrno, 1, $4)))
-			ERROR("unknown argument type[3] - %s\n", $1);
+	if (NULL == (arg = lt_args_getarg(scfg, $3, $1, ptrno, 1, $4))) {
+		if (NULL == (arg = lt_args_getarg(scfg, "void", $1, ptrno, 1, $4)))
+			ERROR("unknown argument type[3] - %s\n", $3);
 	}
 
 	$$ = arg;
@@ -565,6 +563,126 @@ include_def: INCLUDE '"' FILENAME '"'
 {
 	if (lt_inc_open(scfg, lt_args_sinc, $3))
 		ERROR("failed to process include: \"%s\"", $3);
+}
+
+XDEF:
+NAME NAME POINTER NAME
+{
+	struct lt_arg *arg = NULL;
+	char *tokname;
+	size_t toklen/*, i*/;
+//	int ptrno = strlen($3);
+
+	free($3);
+	toklen = strlen($1) + strlen($2) + 2;
+	tokname = alloca(toklen);
+	memset(tokname, 0, toklen);
+	snprintf(tokname, toklen, "%s %s", $1, $2);
+
+/*	for (i = 0; i < sizeof(typedef_mapping_table)/sizeof(typedef_mapping_table[0]); i++) {
+		if (!strcmp(typedef_mapping_table[i][0], tokname)) {
+			arg = lt_args_getarg(scfg, typedef_mapping_table[i][1], $4, ptrno, 1, NULL);
+			break;
+		}
+	}*/
+
+	if (!arg)
+                ERROR("unknown argument type[10] - %s\n", $1);
+
+	$$ = arg;
+}
+|
+NAME NAME ENUM_REF
+{
+
+	if (!strcmp($1, "func"))
+		$1 = "void";
+
+	struct lt_arg *arg;
+
+	if (NULL == (arg = lt_args_getarg(scfg, $1, $2, 0, 1, $3))) {
+		if (getenum(scfg, $1) == NULL) {
+			if (getenum_bm(scfg, $1) == NULL)
+				ERROR("unknown argument type[2a] - %s; possibly due to enum specification of \"%s\"\n", $1, $3);
+		}
+
+		if (NULL == (arg = lt_args_getarg(scfg, "int", $2, 0, 1, $1)))
+			ERROR("unknown argument type[2b] - %s; possibly due to enum specification of \"%s\"\n", $1, $3);
+	}
+
+	$$ = arg;
+}
+|
+NAME POINTER NAME ENUM_REF
+{
+	struct lt_arg *arg;
+	int ptrno = strlen($2);
+
+	free($2);
+
+	if (NULL == (arg = lt_args_getarg(scfg, $1, $3, ptrno, 1, $4))) {
+		if (NULL == (arg = lt_args_getarg(scfg, "void", $3, ptrno, 1, $4)))
+			ERROR("unknown argument type[3] - %s\n", $1);
+	}
+
+	$$ = arg;
+}
+|
+NAME
+{
+	struct lt_arg *arg;
+
+	if (NULL == (arg = lt_args_getarg(scfg, $1, ANON_PREFIX, 0, 1, NULL))) {
+
+		if (getenum(scfg, $1) == NULL)
+			ERROR("unknown argument type[6a] - %s\n", $1);
+
+		if (NULL == (arg = lt_args_getarg(scfg, "int", ANON_PREFIX, 0, 1, $1)))
+			ERROR("unknown argument type[6b] - %s\n", $1);
+
+	}
+
+	$$ = arg;
+}
+|
+NAME POINTER
+{
+	struct lt_arg *arg;
+	int ptrno = strlen($2);
+
+	free ($2);
+
+	if (NULL == (arg = lt_args_getarg(scfg, $1, ANON_PREFIX, ptrno, 1, NULL))) {
+		if (NULL == (arg = lt_args_getarg(scfg, "void", ANON_PREFIX, ptrno, 1, NULL)))
+			ERROR("unknown argument type[7] - %s\n", $1);
+	}
+
+	$$ = arg;
+}
+|
+STRUCT NAME POINTER
+{
+	struct lt_arg *arg;
+	int ptrno = strlen($3);
+
+	free($3);
+
+	if (NULL == (arg = lt_args_getarg(scfg, $2, ANON_PREFIX, ptrno, 1, NULL))) {
+		if (NULL == (arg = lt_args_getarg(scfg, "void", ANON_PREFIX, ptrno, 1, NULL)))
+			ERROR("unknown argument type[8] - %s\n", $2);
+	}
+
+	$$ = arg;
+}
+|
+NAME '=' NAME NAME
+{
+	struct lt_arg *arg;
+
+	if (NULL == (arg = lt_args_getarg(scfg, $1, $4, 0, 1, $3)))
+		ERROR("unknown argument type[9] - %s; possibly due to enum specification of \"%s\"\n", $1, $3);
+
+	$$ = arg;
 }
 
 %%

@@ -1196,7 +1196,11 @@ struct lt_arg* lt_args_getarg(struct lt_config_shared *cfg, const char *type,
 		if (arg->en->bitmask)
 			bitmask = enum_name;
 
-		fmt = arg->en->fmt;
+		if (!fmt)
+			fmt = arg->en->fmt;
+		else if (strchr(fmt, 'm'))
+			bitmask = enum_name;
+
 	}
 
 	XSTRDUP_ASSIGN(arg->name, name);
@@ -1409,9 +1413,7 @@ STATIC int getstr_pod(struct lt_config_shared *cfg, int dspname, struct lt_arg *
 	*arglen = 0;
 
 	if (arg->type_id == LT_ARGS_TYPEID_FNPTR) {
-//		void *fn = *((void **) pval);
 		void *fn = pval;
-		char addrbuf[128];
 		const char *fname;
 		const char *dname1, *dname2;
 
@@ -1422,8 +1424,6 @@ STATIC int getstr_pod(struct lt_config_shared *cfg, int dspname, struct lt_arg *
 			len = snprintf(argbuf, alen, "%s%sfn@ NULL", dname1, dname2);
 		else if ((fname = lookup_addr(fn)))
 			len = snprintf(argbuf, alen, "%s%sfn@ %s()", dname1, dname2, fname);
-		else if (resolve_sym(fn, 1, addrbuf, sizeof(addrbuf), NULL))
-			len = snprintf(argbuf, alen, "%s%sfn@ %s()", dname1, dname2, addrbuf);
 		else
 			len = snprintf(argbuf, alen, "%s%sfn@ %p", dname1, dname2, fn);
 
@@ -1463,18 +1463,10 @@ STATIC int getstr_pod(struct lt_config_shared *cfg, int dspname, struct lt_arg *
 		if (!len) {
 			if (ptr) {
 				const char *aname = NULL;
-				char abuf[128];
 				size_t off = 0;
 
-				if (cfg->resolve_syms) {
+				if (cfg->resolve_syms)
 					aname = get_address_mapping(ptr, NULL, &off);
-
-					if (!aname) {
-						aname = resolve_sym(ptr, 0, abuf, sizeof(abuf), NULL);
-						off = 0;
-					}
-
-				}
 
 				if (cfg->resolve_syms && aname) {
 					const char *fmt_on = "", *fmt_off = "";
@@ -1508,7 +1500,7 @@ do {                                                                 \
 	if (arg->bitmask_class) {
 		char bmstr[1024];
 
-		char *bm = lookup_bitmask_by_class(cfg, arg->bitmask_class, *((unsigned long *)pval), arg->fmt, bmstr, sizeof(bmstr));
+		char *bm = lookup_bitmask_by_class(cfg, arg->bitmask_class, (unsigned long)pval, arg->fmt, bmstr, sizeof(bmstr));
 		len = snprintf(argbuf, alen, "%s", bm);
 	} else if (arg->fmt && (!strcmp(arg->fmt, "o"))) {
 		ARGS_SPRINTF("0%o", unsigned int);

@@ -80,7 +80,7 @@ define remove
 	$(QUIET_RM) echo $1; $(RM) -rf $1
 endef
 
-.PHONY: all clean tags install .FORCE-LATRACE-CFLAGS
+.PHONY: all clean tags install .FORCE-GOTRACE-CFLAGS
 
 all::
 
@@ -150,19 +150,19 @@ ALL_CFLAGS=$(CPPFLAGS) $(CFLAGS) -ggdb -O0 -fPIC -Wall $(INCLUDES)
 ALL_CFLAGS+=-D_GNU_SOURCE -imacros src/autoconf.h
 
 
-%.o: %.c LATRACE-CFLAGS
+%.o: %.c GOTRACE-CFLAGS
 	$(QUIET_CC)$(CC) -o $*.o -c $(ALL_CFLAGS) $<
 
 .SECONDARY:
 
-%.c: %.l LATRACE-CFLAGS
+%.c: %.l GOTRACE-CFLAGS
 	$(QUIET_LEX)$(LEX) -t $< > $(basename $<).c
 
-%.c: %.y LATRACE-CFLAGS
+%.c: %.y GOTRACE-CFLAGS
 	$(QUIET_YACC)$(YACC) -v $< -d -o $(basename $<).c
 
 
-all:: $(PROGRAMS) LATRACE-CFLAGS
+all:: $(PROGRAMS) GOTRACE-CFLAGS
 
 clean::
 	$(call remove, $(OBJS) $(PROGRAMS))
@@ -205,8 +205,8 @@ cscope:
 TRACK_CFLAGS = $(subst ','\'',$(ALL_CFLAGS)):\
              $(prefix):$(exec_prefix):$(bindir):$(libdir):$(sysconfdir) #'
 
-LATRACE-CFLAGS: .FORCE-LATRACE-CFLAGS
+GOTRACE-CFLAGS: .FORCE-GOTRACE-CFLAGS
 	@FLAGS='$(TRACK_CFLAGS)'; \
-	if test x"$$FLAGS" != x"`cat LATRACE-CFLAGS 2>/dev/null`" ; then \
-		echo "$$FLAGS" >LATRACE-CFLAGS; \
+	if test x"$$FLAGS" != x"`cat GOTRACE-CFLAGS 2>/dev/null`" ; then \
+		echo "$$FLAGS" >GOTRACE-CFLAGS; \
 	fi

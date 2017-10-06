@@ -495,8 +495,15 @@ STATIC void* get_value(struct lt_config_shared *cfg, struct lt_arg *arg, pid_t t
 		return str;
 	}
 
-	if (next_off)
-		*next_off = extra_off + sizeof(void *);
+	if (next_off) {
+		if ((arg->type_id == LT_ARGS_TYPEID_INT32 || (arg->type_id == LT_ARGS_TYPEID_UINT32))) {
+			*next_off = extra_off + sizeof(int32_t);
+			val >>= 32;
+			val &= 0x00000000ffffffff;
+		} else {
+			*next_off = extra_off + sizeof(void *);
+		}
+	}
 
 	*err = 0;
 	return (void *)val;

@@ -62,7 +62,8 @@ whitespace	([ \t])
 "#include"		{ BEGIN(include); return INCLUDE; }
 <include>{filename}	{ got_filename = strdup(lt_args_text); }
 <include>"\""		{ if (!got_filename) return '"'; }
-<include>\n		{ if (!got_filename) { BEGIN(INITIAL); }
+<include>\n		{ lt_inc_stack(lt_args_sinc)->lineno++;
+			  if (!got_filename) { BEGIN(INITIAL); }
 			 else {
 				launch_preprocessor = 1;
 				lt_args_lval.s = got_filename;
@@ -72,12 +73,10 @@ whitespace	([ \t])
 <include>.		{ ; }
 
 "__attribute__"{whitespace}*"((".*"))"		{ return ATTRIBUTE; }
-"const"			{ ; }
+"const"			{ return CONST; }
 <<EOF>>			{ return END; }
 "struct"		{ return STRUCT; }
 "sdflksjdgfunc"			{ return FUNC; }
-"enum"			{ return ENUM; }
-"typedef"		{ return TYPEDEF; }
 {name}[!~^]?(\/[opxduh])?	{ lt_args_lval.s = strdup(lt_args_text); return NAME; }
 "\*"+			{ lt_args_lval.s = strdup(lt_args_text); return POINTER; }
 ")"			{ return ')'; }
@@ -88,7 +87,7 @@ whitespace	([ \t])
 ","			{ return ','; }
 "="			{ return '='; }
 \			{ ; }
-\n			{ lt_inc_stack(lt_args_sinc)->lineno++; }
+\n			{ lt_inc_stack(lt_args_sinc)->lineno++; return NEWLINE; }
 .			{ ; }
 
 %%

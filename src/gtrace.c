@@ -10,6 +10,8 @@
 #include <sys/user.h>
 #include <errno.h>
 
+// TODO: waitpid(..., WUNTRACED)
+
 #include "config.h"
 #include "elfh.h"
 #include "args.h"
@@ -40,6 +42,7 @@ typedef struct saved_prolog {
 	void *addr;
 	long saved_prolog;
 	char *fname;
+	int refcnt;
 } saved_prolog_t;
 
 size_t saved_prolog_nentries = 1024;
@@ -95,7 +98,7 @@ extern char *read_string_remote(pid_t pid, char *addr, size_t slen);
 void dump_wait_state(pid_t pid, int status, int force);
 int set_all_intercepts(pid_t pid);
 int set_intercept(pid_t pid, void *addr);
-int set_ret_intercept(pid_t pid, const char *fname, void *addr);
+int set_ret_intercept(pid_t pid, const char *fname, void *addr, size_t *pidx);
 
 
 int
@@ -152,18 +155,18 @@ is_pid_new(pid_t pid) {
 }
 
 int
-handle_trace_trap(pid_t pid, int status) {
+handle_trace_trap(pid_t pid, int status, int dont_reset) {
 	struct lt_symbol *lts;
 	void *hot_pc, *hot_sp;
 	struct user_regs_struct regs;
 	const char *symname;
 	long retrace, ret_addr;
 	size_t i, ra;
-	int is_return = 0;
+	int ret, is_return = 0;
+	int last_ref = 0;
 
 	if (!WIFSTOPPED(status) || (WSTOPSIG(status) != SIGTRAP)) {
 		dump_wait_state(pid, status, 1);
-		fprintf(stderr, "KEK\n");
 
 		if (WIFSTOPPED(status) && (WSTOPSIG(status) == SIGSTOP)) {
 			if (is_pid_new(pid)) {
@@ -221,11 +224,21 @@ handle_trace_trap(pid_t pid, int status) {
 		}
 
 		is_return = 1;
+
+		if (__sync_sub_and_fetch(&(saved_ret_prologs[ra].refcnt), 1) == 0)
+			last_ref = 1;
+
+//		printf("HEH: return refcnt[%zu] for %s (%p) is %d; last ref = %d\n", ra, saved_ret_prologs[ra].fname, saved_ret_prologs[ra].addr, saved_ret_prologs[ra].refcnt, last_ref);
 	}
+
+	if (dont_reset)
+		return 0;
 
 //	printf("is return = %d\n", is_return);
 
 	if (!is_return) {
+		size_t ridx;
+
 		errno = 0;
 		ret_addr = ptrace(PTRACE_PEEKTEXT, pid, regs.rsp, 0);
 		if (errno != 0) {
@@ -235,10 +248,14 @@ handle_trace_trap(pid_t pid, int status) {
 
 //		printf("RET ADDR would have been %lx\n", ret_addr);
 		symname = lookup_addr(hot_pc);
-		if (set_ret_intercept(pid, symname, (void *)ret_addr) < 0) {
+		if (set_ret_intercept(pid, symname, (void *)ret_addr, &ridx) < 0) {
 			fprintf(stderr, "Error: could not set intercept on return address\n");
 	//		return -1;
+		} else {
+			__sync_add_and_fetch(&(saved_ret_prologs[ridx].refcnt), 1);
+//			printf("HEH2: return[%zu] refcnt for %s (%p) is %d\n", ridx, saved_ret_prologs[ridx].fname, saved_ret_prologs[ridx].addr, saved_ret_prologs[ridx].refcnt);
 		}
+
 	}
 
 	if (is_return) {
@@ -249,6 +266,7 @@ handle_trace_trap(pid_t pid, int status) {
 //		printf("sym = [%s]\n", symname);
 	}
 
+	// Don't replace 
 	if (is_return)
 		retrace = ptrace(PTRACE_POKETEXT, pid, saved_ret_prologs[ra].addr, saved_ret_prologs[ra].saved_prolog);
 	else
@@ -270,13 +288,12 @@ handle_trace_trap(pid_t pid, int status) {
 	lt_tsd_t *tsdx = thread_get_tsd(pid, 1);
 
 	if (is_return) {
-//		printf("RETURN BYPASS\n");
-	/*int ret = */sym_exit(symname, lts, "from", "to", pid, &regs, &regs, tsdx);
-		return 1;
-	}
-
+		ret = sym_exit(symname, lts, "from", "to", pid, &regs, &regs, tsdx);
+//		return 1;
+	} else {
 //	fprintf(stderr, "HEH: %d / %s / %p\n", pid, symname, tsdx);
-	/*int ret = */sym_entry(symname, lts, "from", "to", pid, &regs, tsdx);
+		ret = sym_entry(symname, lts, "from", "to", pid, &regs, tsdx);
+	}
 
 	if (ptrace(PTRACE_SINGLESTEP, pid, 0, 0) < 0) {
 		perror("ptrace(PTRACE_SINGLESTEP)");
@@ -295,10 +312,17 @@ handle_trace_trap(pid_t pid, int status) {
 		return -1;
 	}
 
-	retrace = saved_prologs[i].saved_prolog;
+	if (is_return) {
+		retrace = saved_ret_prologs[ra].saved_prolog;
+		ret_addr = (long)saved_ret_prologs[ra].addr;
+	} else {
+		retrace = saved_prologs[i].saved_prolog;
+		ret_addr = (long)saved_prologs[i].addr;
+	}
+
 	*((unsigned char *)&retrace) = 0xcc;
 
-	if (ptrace(PTRACE_POKETEXT, pid, saved_prologs[i].addr, retrace) < 0) {
+	if (ptrace(PTRACE_POKETEXT, pid, ret_addr, retrace) < 0) {
 		perror("ptrace(PTRACE_POKETEXT)");
 		return -1;
 	}
@@ -409,6 +433,21 @@ dump_intercepts(void) {
 	return;
 }
 
+int set_intercept_redirect(pid_t pid, void *addr) {
+/*	ZydisDecoder decoder;
+	uint64_t ip = 0x007FFFFFFF400000;
+	uint8_t *iptr = (uint8_t *)&addr;
+	ZydisDecodedInstruction instruction;
+
+	ZydisDecoderInit( &decoder, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_ADDRESS_WIDTH_64);
+	
+	if (ZYDIS_SUCCESS(ZydisDecoderDecodeBuffer(&decoder, iptr, 16, ip, &instruction))) {
+		fprintf(stderr, "Decoded instruction length: %u bytes\n", instruction.length);
+	}
+*/
+	return 0;
+}
+
 int
 set_intercept(pid_t pid, void *addr) {
 	long saved_prolog = 0, mod_prolog;
@@ -449,9 +488,10 @@ set_intercept(pid_t pid, void *addr) {
 }
 
 int
-set_ret_intercept(pid_t pid, const char *fname, void *addr) {
+set_ret_intercept(pid_t pid, const char *fname, void *addr, size_t *pidx) {
 	long saved_ret_prolog = 0, mod_prolog;
 	unsigned char *tptr;
+	size_t i;
 
 //printf("set_ret_intercept: %s\n", fname);
 
@@ -465,6 +505,15 @@ set_ret_intercept(pid_t pid, const char *fname, void *addr) {
 
 		saved_ret_prolog_nentries *= 2;
 		saved_ret_prologs = new_prologs;
+	}
+
+	for (i = 0; i < saved_ret_prolog_entries; i++) {
+		if (saved_ret_prologs[i].addr == addr) {
+			if (pidx)
+				*pidx = saved_ret_prolog_entries;
+
+			return 0;
+		}
 	}
 
 	errno = 0;
@@ -486,6 +535,10 @@ set_ret_intercept(pid_t pid, const char *fname, void *addr) {
 	saved_ret_prologs[saved_ret_prolog_entries].addr = addr;
 	saved_ret_prologs[saved_ret_prolog_entries].fname = strdup(fname);
 	saved_ret_prologs[saved_ret_prolog_entries].saved_prolog = saved_ret_prolog;
+
+	if (pidx)
+		*pidx = saved_ret_prolog_entries;
+
 	saved_ret_prolog_entries++;
 	return 0;
 }
@@ -538,7 +591,7 @@ set_all_intercepts(pid_t pid) {
 
 //		#define MAXJ 	453
 		#define MAXJ	2000	
-		printf("HEH: MAXJ = %s\n", symbol_store[i].map[MAXJ].name);
+//		printf("HEH: MAXJ = %s\n", symbol_store[i].map[MAXJ].name);
 			for (size_t j = 0; j < symbol_store[i].msize; j++) {
 //				printf("CANDIDATE: %s - %lx\n", symbol_store[i].map[j].name, symbol_store[i].map[j].addr);
 
@@ -625,7 +678,7 @@ trace_program(const char *progname, char * const *args) {
 		exit(EXIT_FAILURE);
 	}
 	dump_wait_state(pid, wait_status, 0);
-	handle_trace_trap(pid, wait_status);
+	handle_trace_trap(pid, wait_status, 1);
 
 	printf("Parent detected possible exec\n");
 
@@ -652,7 +705,7 @@ trace_program(const char *progname, char * const *args) {
 		}
 		dump_wait_state(cpid, wait_status, 0);
 
-		if (handle_trace_trap(cpid, wait_status) < 1) {
+		if (handle_trace_trap(cpid, wait_status, 0) < 1) {
 			fprintf(stderr, "Error: something bad happened while handling trace trap\n");
 		}
 
