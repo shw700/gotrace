@@ -70,7 +70,7 @@ do { \
 %}
 
 
-%token NEWLINE NAME FILENAME FUNC STRUCT CONST INCLUDE END POINTER ATTRIBUTE
+%token NEWLINE NAME FILENAME FUNC STRUCT CONST IMPORT END POINTER ATTRIBUTE
 
 %union
 {
@@ -105,7 +105,7 @@ entry gofunc_def
 |
 entry func_def
 |
-entry include_def
+entry import_def
 |
 entry END
 {
@@ -558,11 +558,11 @@ ENUM_REF:
 	$$ = NULL;
 }
 
-/* include definitions */
-include_def: INCLUDE '"' FILENAME '"'
+/* import definitions */
+import_def: IMPORT '"' FILENAME '"'
 {
 	if (lt_inc_open(scfg, lt_args_sinc, $3))
-		ERROR("failed to process include: \"%s\"", $3);
+		ERROR("failed to process import: \"%s\"", $3);
 }
 
 XDEF:

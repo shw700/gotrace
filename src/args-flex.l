@@ -39,11 +39,11 @@ name		([-0-9a-zA-Z_\.|/])+|\.\.\.
 filename	([-0-9a-zA-Z\./_])+
 whitespace	([ \t])
 
-%x comment include
+%x comment import
 %%
  /* We need to delay return of the preprocessor filename because our grammar parser
     tries to read in the next file's contents before it has transitioned out of the
-    include state. */
+    import state. */
 	if (launch_preprocessor) {
 		got_filename = NULL;
 		launch_preprocessor = 0;
@@ -59,10 +59,10 @@ whitespace	([ \t])
 <comment>\n		{ lt_inc_stack(lt_args_sinc)->lineno++; }
 <comment>"*"+"/"	BEGIN(INITIAL);
 
-"#include"		{ BEGIN(include); return INCLUDE; }
-<include>{filename}	{ got_filename = strdup(lt_args_text); }
-<include>"\""		{ if (!got_filename) return '"'; }
-<include>\n		{ lt_inc_stack(lt_args_sinc)->lineno++;
+"import"		{ BEGIN(import); return IMPORT; }
+<import>{filename}	{ got_filename = strdup(lt_args_text); }
+<import>"\""		{ if (!got_filename) return '"'; }
+<import>\n		{ lt_inc_stack(lt_args_sinc)->lineno++;
 			  if (!got_filename) { BEGIN(INITIAL); }
 			 else {
 				launch_preprocessor = 1;
@@ -70,7 +70,7 @@ whitespace	([ \t])
 				return FILENAME;
 			}
 			}
-<include>.		{ ; }
+<import>.		{ ; }
 
 "__attribute__"{whitespace}*"((".*"))"		{ return ATTRIBUTE; }
 "const"			{ return CONST; }
