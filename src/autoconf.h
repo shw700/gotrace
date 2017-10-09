@@ -23,16 +23,10 @@
 #ifndef AUTOCONF_H
 
 /* Temporary directory prefix. */
-#define CONFIG_LT_CONFIG "/tmp/lt-config"
+#define CONFIG_GT_CONFIG "/tmp/lt-config"
 
 /* Version define. */
-#define CONFIG_VERSION "0.5.12"
-
-/* Argument display support. */
-#define CONFIG_ARCH_HAVE_ARGS 1
-
-/* liberty */
-#define CONFIG_LIBERTY 1
+#define CONFIG_VERSION "0.1.1"
 
 /* large file support */
 /* #undef _LARGE_FILES */

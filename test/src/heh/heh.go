@@ -30,6 +30,14 @@ func Somefunc6(i1 int, i2 uint) {
 	fmt.Printf("Somefunc6(): input = %v, %v\n", i1, i2)
 }
 
+func Somefunc10(hi int32, hi2 int32, ok bool, hi3 uint32) {
+	fmt.Printf("The number is %v\n", hi)
+}
+
+func Somefunc11(hi int16, hi2 int16, ok bool, hi3 uint16) {
+	fmt.Printf("The number is %v\n", hi)
+}
+
 /*func Somefunc7(iarr []int) {
 	fmt.Println("GOT ARRAY: ", iarr)
 }
@@ -48,6 +56,9 @@ func main() {
 	Somefunc4("the quick brown fox", "jumps over the lazy dogs")
 	Somefunc5(true, 123)
 	Somefunc6(0-1, 0xffffffffffffffff)
+
+	Somefunc10(31337, 69, true, 13)
+	Somefunc11(31338, 70, false, 31)
 
 	ok = Somefunc3("why")
 /*	arr := []int{666}

@@ -171,7 +171,7 @@ int init_custom_handlers(struct lt_config_audit *cfg)
 		size_t gdsize;
 
 		if (!gsrc)
-			gsrc = LT_CONF_TRANSFORMERS_DIR;
+			gsrc = GT_CONF_TRANSFORMERS_DIR;
 
 		gdsize = strlen(gsrc) + 8;
 

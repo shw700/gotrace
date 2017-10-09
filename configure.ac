@@ -92,16 +92,6 @@ AC_SUBST(CONFIG_VERSION, "AC_PACKAGE_VERSION")
 AC_DEFINE(CONFIG_LT_CONFIG, "/tmp/lt-config", [Temporary directory prefix.])
 AC_DEFINE(CONFIG_VERSION, "AC_PACKAGE_VERSION", [Version of latrace.])
 
-# for following architectures we have argument display support
-if test "$unamem" = "x86_64" -o\
-	"$unamem" = "i686" -o\
-	"$unamem" = "arm"; then
-	AC_DEFINE(CONFIG_ARCH_HAVE_ARGS)
-	AC_SUBST(CONFIG_ARCH_HAVE_ARGS, "y")
-else
-	AC_MSG_WARN([Arguments display support disabled])
-fi
-
 # for following architectures we have automated tests support
 if test "$unamem" = "x86_64" -o\
 	"$unamem" = "i686" -o\
@@ -111,15 +101,8 @@ else
 	AC_MSG_WARN([No automated test support])
 fi
 
-AC_SEARCH_LIBS([cplus_demangle], [iberty_pic iberty],
-	[AC_DEFINE(CONFIG_LIBERTY, 1, "Liberty found.")],
-	[AC_MSG_WARN([libiberty not found, no demangle support (install binutils-dev)])])
-
 AC_SEARCH_LIBS([elf_getscn], [elf], [],
 	[AC_MSG_ERROR([libelf not found; must be installed (try libelf-dev)])])
-
-AC_SEARCH_LIBS([unw_backtrace], [unwind], [],
-	[AC_MSG_ERROR([libunwind not found; must be installed (try libunwind-dev)])])
 
 AC_CONFIG_HEADER([src/autoconf.h])
 AC_CONFIG_FILES([src/autoconf.make])

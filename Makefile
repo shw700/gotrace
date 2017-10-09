@@ -19,9 +19,9 @@
 
 -include src/autoconf.make
 
-confdir     := $(sysconfdir)/latrace.d
-headdir     := $(sysconfdir)/latrace.d/headers
-headarchdir := $(sysconfdir)/latrace.d/headers/sysdeps/$(CONFIG_SYSDEP_DIR)
+confdir     := $(sysconfdir)/gotrace.d
+headdir     := $(sysconfdir)/gotrace.d/headers
+headarchdir := $(sysconfdir)/gotrace.d/headers/sysdeps/$(CONFIG_SYSDEP_DIR)
 
 # looks like DESTDIR is a standard, but prioritize ROOTDIR anyway
 ifdef DESTDIR
@@ -85,48 +85,11 @@ endef
 all::
 
 install:: all
-	$(call install,etc/latrace.d/latrace.conf,$(confdir),644)
-	$(call install,etc/latrace.d/headers/latrace.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/ctype.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/inet.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/misc.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/typedefs.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/stdlib.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/string.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/ctype.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/ncurses.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/stdio.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/dirent.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/unistd.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/libintl.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/dlfcn.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/fcntl.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/getopt.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/signal.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/ioctl.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/socket.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/netdb.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/stat.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/wait.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/utmp.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/time.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/termios.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/term.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/syslog.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/pwd.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/libio.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/locale.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/pthread.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/resource.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/mman.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/other.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/sys.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/cpp.h,$(headdir),644)
-	$(call install,etc/latrace.d/headers/ssl.h,$(headdir),644)
+	$(call install,etc/gotrace.d/gotrace.conf,$(confdir),644)
+	$(call install,etc/gotrace.d/headers/gotrace.go,$(headdir),644)
 ifeq ($(CONFIG_SYSDEP_DIR),x86_64)
 	@mkdir -p $(ROOTDIR)/$(confarch)
-	$(call install,etc/latrace.d/headers/sysdeps/$(CONFIG_SYSDEP_DIR)/latrace.h,$(headarchdir),644)
-	$(call install,etc/latrace.d/headers/sysdeps/$(CONFIG_SYSDEP_DIR)/syscall.h,$(headarchdir),644)
+	$(call install,etc/gotrace.d/headers/sysdeps/$(CONFIG_SYSDEP_DIR)/syscall.go,$(headarchdir),644)
 endif
 
 
@@ -166,7 +129,7 @@ all:: $(PROGRAMS) GOTRACE-CFLAGS
 
 clean::
 	$(call remove, $(OBJS) $(PROGRAMS))
-	$(call remove, lib bin share deps.make latrace-$(CONFIG_VERSION))
+	$(call remove, lib bin share deps.make gotrace-$(CONFIG_VERSION))
 
 mrproper::
 	git clean -xdf

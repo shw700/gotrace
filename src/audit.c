@@ -56,7 +56,7 @@ unsigned int thread_warning = 0;
 int lt_thread_pkey_init = 0;
 
 
-STATIC int check_names(char *name, char **ptr)
+static int check_names(char *name, char **ptr)
 {
 	char *n;
 	int matched = 0;
@@ -100,7 +100,7 @@ STATIC int check_names(char *name, char **ptr)
 	return 0;
 }
 
-STATIC int check_flow_below(const char *symname, int in, lt_tsd_t *tsd)
+static int check_flow_below(const char *symname, int in, lt_tsd_t *tsd)
 {
 	int ret = tsd->flow_below_stack;
 
@@ -110,7 +110,7 @@ STATIC int check_flow_below(const char *symname, int in, lt_tsd_t *tsd)
 	return ret;
 }
 
-STATIC void free_argbuf(int argret, char *argbuf, char *argdbuf)
+static void free_argbuf(int argret, char *argbuf, char *argdbuf)
 {
 	XFREE(argbuf);
 
@@ -285,7 +285,7 @@ int sym_exit(const char *symname, void *ptr, char *lib_from, char *lib_to, pid_t
 	return 0;
 }
 
-STATIC int check_pid()
+static int check_pid()
 {
 	pid_t pid = getpid();
 
@@ -324,7 +324,7 @@ typedef struct lt_thread_pkey {
 
 static lt_thread_pkey_t thread_data[MAXIDX][MAXPTIDS];
 
-STATIC int
+static int
 SETSPECIFIC(pid_t tid, size_t idx, void *data, int *found) {
 	size_t t;
 
@@ -344,7 +344,7 @@ SETSPECIFIC(pid_t tid, size_t idx, void *data, int *found) {
 	return -1;
 }
 
-STATIC void *
+static void *
 GETSPECIFIC(pid_t tid, size_t idx, int *found) {
 	void *result = NULL;
 	size_t t;

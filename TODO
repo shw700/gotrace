@@ -1,1 +1,3 @@
-Remove references to CONFIG_ARCH_HAVE_ARGS
+fix parsing of primitives < 64 bits wide on stack
+newline shouldn't be required after const declaration
+remove transformer call stacks

@@ -31,7 +31,7 @@ char* lt_args_arch_conf(struct lt_config_shared *cfg)
 	static char buf[LT_MAXFILE];
 
 	sprintf(buf, "%s/%s",
-		LT_CONF_HEADERS_DIR,
+		GT_CONF_HEADERS_DIR,
 		"sysdeps/x86_64/latrace.h");
 
 	return buf;

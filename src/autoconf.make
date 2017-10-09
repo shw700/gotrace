@@ -37,13 +37,11 @@ YACC                  = bison -y
 CPPFLAGS              = 
 CFLAGS                = -g -O2
 LDFLAGS               = 
-LIBS                  = -liberty 
 
 ASCIIDOC              = :
 XMLTO                 = :
 
 CONFIG_SYSDEP_DIR     = x86_64
 
-CONFIG_VERSION        = 0.5.12
-CONFIG_ARCH_HAVE_ARGS = y
+CONFIG_VERSION        = 0.1.1
 CONFIG_ARCH_HAVE_TEST = y

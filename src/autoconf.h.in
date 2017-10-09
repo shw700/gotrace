@@ -22,16 +22,10 @@
 #ifndef AUTOCONF_H
 
 /* Temporary directory prefix. */
-#undef CONFIG_LT_CONFIG
+#undef CONFIG_GT_CONFIG
 
 /* Version define. */
 #undef CONFIG_VERSION
-
-/* Argument display support. */
-#undef CONFIG_ARCH_HAVE_ARGS
-
-/* liberty */
-#undef CONFIG_LIBERTY
 
 /* large file support */
 #undef _LARGE_FILES

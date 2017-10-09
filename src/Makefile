@@ -20,7 +20,7 @@
 GOTRACE_BIN=gotrace
 GOTRACE_LDFLAGS=$(LDFLAGS) -Wl,--no-as-needed -Wl,--export-dynamic
 #gcc -ggdb -O0 -Wall -D_GNU_SOURCE -Wl,--export-dynamic
-GOTRACE_LIBS=$(LIBS) $(LEXLIB) -ldl -lelf -lpthread
+GOTRACE_LIBS=$(LIBS) $(LEXLIB) -ldl -lelf -lpthread ./zydis/build/libZydis.a
 
 GOTRACE_OBJS=\
 	src/gtrace.o \
@@ -49,10 +49,10 @@ $(GOTRACE_BIN): $(GOTRACE_OBJS)
 
 CPPFLAGS+=-I./zydis/include -I./zydis/build
 CPPFLAGS+=-DCONFIG_LIBDIR=\"$(libdir)\"
-CPPFLAGS+=-DLT_CONF_DIR=\"$(sysconfdir)/gotrace.d\"
-#CPPFLAGS+=-DLT_CONF_HEADERS_DIR=\"$(sysconfdir)/gotrace.d/headers\"
-CPPFLAGS+=-DLT_CONF_TRANSFORMERS_DIR=\"$(sysconfdir)/gotrace.d/transformers\"
-#CPPFLAGS+=-DLT_CONF_HEADERS_FILE=\"$(sysconfdir)/gotrace.d/headers/gotrace.h\"
+CPPFLAGS+=-DGT_CONF_DIR=\"$(sysconfdir)/gotrace.d\"
+CPPFLAGS+=-DGT_CONF_HEADERS_DIR=\"$(sysconfdir)/gotrace.d/headers\"
+CPPFLAGS+=-DGT_CONF_TRANSFORMERS_DIR=\"$(sysconfdir)/gotrace.d/transformers\"
+CPPFLAGS+=-DGT_CONF_HEADERS_FILE=\"$(sysconfdir)/gotrace.d/headers/gotrace.go\"
 # no dependency for flex and bison definitions
 OBJS_DEPS_OMIT+=\
 	src/config-flex.o

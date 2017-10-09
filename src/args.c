@@ -494,7 +494,7 @@ left:
 	return outbuf;
 } 
 
-STATIC int enum_comp(const void *ep1, const void *ep2)
+static int enum_comp(const void *ep1, const void *ep2)
 {
 	struct lt_enum_elem *e1 = (struct lt_enum_elem*) ep1;
 	struct lt_enum_elem *e2 = (struct lt_enum_elem*) ep2;
@@ -502,7 +502,7 @@ STATIC int enum_comp(const void *ep1, const void *ep2)
 	return e1->val - e2->val;
 }
 
-STATIC int enum_bm_comp(const void *ep1, const void *ep2)
+static int enum_bm_comp(const void *ep1, const void *ep2)
 {
 	struct lt_enum_bm_elem *e1 = (struct lt_enum_bm_elem*) ep1;
 	struct lt_enum_bm_elem *e2 = (struct lt_enum_bm_elem*) ep2;
@@ -510,7 +510,7 @@ STATIC int enum_bm_comp(const void *ep1, const void *ep2)
 	return e1->val - e2->val;
 }
 
-STATIC struct lt_enum_elem* get_enumelem(struct lt_config_shared *cfg,
+static struct lt_enum_elem* get_enumelem(struct lt_config_shared *cfg,
 	long val, struct lt_enum *en)
 {
 	struct lt_enum_elem key;
@@ -523,7 +523,7 @@ STATIC struct lt_enum_elem* get_enumelem(struct lt_config_shared *cfg,
 		sizeof(struct lt_enum_elem), enum_comp);
 }
 
-STATIC struct lt_enum_elem* find_enumelem(struct lt_config_shared *cfg,
+static struct lt_enum_elem* find_enumelem(struct lt_config_shared *cfg,
 	char *name, struct lt_enum *en)
 {
 	struct lt_enum_elem *elem;
@@ -969,7 +969,7 @@ int lt_args_add_sym(struct lt_config_shared *cfg, struct lt_arg *ret,
 	return 0;
 }
 
-STATIC struct lt_arg* argdup(struct lt_config_shared *cfg, struct lt_arg *asrc)
+static struct lt_arg* argdup(struct lt_config_shared *cfg, struct lt_arg *asrc)
 {
 	struct lt_arg *arg, *a;
         struct lt_list_head *h;
@@ -1298,9 +1298,9 @@ int lt_args_init(struct lt_config_shared *cfg)
 				return -1;
 
 			memset(file, 0, fsize);
-			snprintf(file, fsize, "%s/gotrace.h", env_dir);
+			snprintf(file, fsize, "%s/gotrace.go", env_dir);
 		} else
-			file = LT_CONF_HEADERS_FILE;
+			file = GT_CONF_HEADERS_FILE;
 	}
 
 	if (!hcreate_r(LT_ARGS_TAB, &cfg->args_tab)) {
@@ -1338,7 +1338,7 @@ int lt_args_init(struct lt_config_shared *cfg)
 	return 0;
 }
 
-STATIC int getstr_addenum(struct lt_config_shared *cfg, struct lt_arg *arg,
+static int getstr_addenum(struct lt_config_shared *cfg, struct lt_arg *arg,
 			char *argbuf, int alen, long val)
 {
 	char *enstr = NULL;
@@ -1356,7 +1356,7 @@ STATIC int getstr_addenum(struct lt_config_shared *cfg, struct lt_arg *arg,
 	return 0;
 }
 
-STATIC char *massage_string(const char *s)
+static char *massage_string(const char *s)
 {
 	char *result;
 	size_t rlen, slen, i, d_i;
@@ -1396,7 +1396,7 @@ STATIC char *massage_string(const char *s)
 	return result;
 }
 
-STATIC int getstr_pod(struct lt_config_shared *cfg, int dspname, struct lt_arg *arg,
+static int getstr_pod(struct lt_config_shared *cfg, int dspname, struct lt_arg *arg,
 				void *pval, char *argbuf, int *arglen)
 {
 	int len = 0, alen = *arglen;
@@ -1719,7 +1719,7 @@ int lt_args_cb_struct(struct lt_config_shared *cfg, int type, struct lt_arg *arg
 	return 0;
 }
 
-STATIC int getargs(struct lt_config_shared *cfg, struct lt_args_sym *asym,
+static int getargs(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 		pid_t target, struct user_regs_struct *regs, char *abuf, size_t argblen, char **adbuf, int silent, lt_tsd_t *tsd)
 {
 	struct lt_args_data data;
@@ -1789,7 +1789,7 @@ int lt_args_sym_entry(struct lt_config_shared *cfg, struct lt_symbol *sym,
 	return getargs(cfg, asym, target, regs, argbuf, argblen, argdbuf, silent, tsd);
 }
 
-STATIC int getargs_ret(struct lt_config_shared *cfg, struct lt_args_sym *asym,
+static int getargs_ret(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 		pid_t target, struct user_regs_struct *iregs, struct user_regs_struct *regs, char *abuf,
 		size_t argblen, char **adbuf, int silent, lt_tsd_t *tsd)
 {

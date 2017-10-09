@@ -89,14 +89,14 @@ static FILE* open_include(struct lt_config_shared *cfg, char *file)
 		return f;
 
 	/* not an absolute name, give it a chance
-	   inside of the LT_CONF_DIR directory */
-	f = open_include_dir(cfg, file, LT_CONF_DIR);
+	   inside of the GT_CONF_DIR directory */
+	f = open_include_dir(cfg, file, GT_CONF_DIR);
 	if (f)
 		return f;
 
-	/* not in LT_CONF_DIR directory, give it a chance
-	   inside of the LT_CONF_HEADERS_DIR directory */
-	f = open_include_dir(cfg, file, LT_CONF_HEADERS_DIR);
+	/* not in GT_CONF_DIR directory, give it a chance
+	   inside of the GT_CONF_HEADERS_DIR directory */
+	f = open_include_dir(cfg, file, GT_CONF_HEADERS_DIR);
 	return f;
 }
 

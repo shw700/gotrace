@@ -38,11 +38,6 @@
 #include "list.h"
 
 
-#define LT_CONF_HEADERS_DIR	"/tmp/headers"
-#define LT_CONF_HEADERS_FILE	"/tmp/bla.h"
-
-#define STATIC 
-
 typedef struct function_call {
 	char *fn_name;
 	struct user_regs_struct *registers;
@@ -107,8 +102,8 @@ struct lt_config_opt {
 };
 
 struct lt_config_shared {
-#define LT_CONFIG_VERSION	1
-#define LT_CONFIG_MAGIC		((LT_CONFIG_VERSION << 16) + 0xdead)
+#define GT_CONFIG_VERSION	1
+#define GT_CONFIG_MAGIC		((GT_CONFIG_VERSION << 16) + 0xdead)
 	unsigned int magic;
 
 #define LT_LIBS_MAXSIZE     4096

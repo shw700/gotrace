@@ -54,7 +54,7 @@ static long ass_regs_integer_ret[] = {
 static int classificate_arg(struct lt_config_shared *cfg, struct lt_arg *arg,
 				int ret, int align, lt_tsd_t *tsd);
 
-STATIC int classificate_memory(struct lt_config_shared *cfg,
+static int classificate_memory(struct lt_config_shared *cfg,
 			struct lt_arg *arg, int align, lt_tsd_t *tsd)
 {
 
@@ -80,7 +80,7 @@ STATIC int classificate_memory(struct lt_config_shared *cfg,
 	return 0;
 }
 
-STATIC int classificate_integer(struct lt_config_shared *cfg,
+static int classificate_integer(struct lt_config_shared *cfg,
 			struct lt_arg *arg, int align, int regs_size,
 			lt_tsd_t *tsd)
 {
@@ -113,7 +113,7 @@ STATIC int classificate_integer(struct lt_config_shared *cfg,
 	return 0;
 }
 
-STATIC void struct_arch(struct lt_config_shared *cfg, struct lt_arg *sarg,
+static void struct_arch(struct lt_config_shared *cfg, struct lt_arg *sarg,
 			struct lt_arg *farg)
 {
 	if (sarg->pointer)
@@ -134,7 +134,7 @@ STATIC void struct_arch(struct lt_config_shared *cfg, struct lt_arg *sarg,
 }
 
 
-STATIC int classificate_struct_try(struct lt_config_shared *cfg,
+static int classificate_struct_try(struct lt_config_shared *cfg,
 			struct lt_arg *arg, int allmem, int ret,
 			lt_tsd_t *tsd)
 {
@@ -170,7 +170,7 @@ STATIC int classificate_struct_try(struct lt_config_shared *cfg,
 	return 0;
 }
 
-STATIC int get_sizeof(struct lt_config_shared *cfg, struct lt_arg *arg)
+static int get_sizeof(struct lt_config_shared *cfg, struct lt_arg *arg)
 {
 	struct lt_arg *a;
 	int size = 0;
@@ -191,7 +191,7 @@ STATIC int get_sizeof(struct lt_config_shared *cfg, struct lt_arg *arg)
 	return size;
 }
 
-STATIC int classificate_struct(struct lt_config_shared *cfg, struct lt_arg *arg,
+static int classificate_struct(struct lt_config_shared *cfg, struct lt_arg *arg,
 				int ret, lt_tsd_t *tsd)
 {
 	int allmem = 0;
@@ -214,7 +214,7 @@ STATIC int classificate_struct(struct lt_config_shared *cfg, struct lt_arg *arg,
 	return 0;
 }
 
-STATIC int classificate_arg_type(struct lt_config_shared *cfg,
+static int classificate_arg_type(struct lt_config_shared *cfg,
 				struct lt_arg *arg)
 {
 	int class;
@@ -260,7 +260,7 @@ STATIC int classificate_arg_type(struct lt_config_shared *cfg,
 	return class;
 }
 
-STATIC int classificate_arg(struct lt_config_shared *cfg, struct lt_arg *arg,
+static int classificate_arg(struct lt_config_shared *cfg, struct lt_arg *arg,
 				int ret, int align, lt_tsd_t *tsd)
 {
 	int class;
@@ -310,7 +310,7 @@ STATIC int classificate_arg(struct lt_config_shared *cfg, struct lt_arg *arg,
 	return 0;
 }
 
-STATIC int classificate(struct lt_config_shared *cfg, struct lt_args_sym *sym, lt_tsd_t *tsd)
+static int classificate(struct lt_config_shared *cfg, struct lt_args_sym *sym, lt_tsd_t *tsd)
 {
 	int i;
 	struct lt_arg *arg = sym->args[LT_ARGS_RET];
@@ -341,7 +341,7 @@ STATIC int classificate(struct lt_config_shared *cfg, struct lt_args_sym *sym, l
 	return 0;
 }
 
-STATIC void *get_value_mem(struct lt_config_shared *cfg, struct lt_arg *arg,
+static void *get_value_mem(struct lt_config_shared *cfg, struct lt_arg *arg,
 			void *regs, int ret)
 {
 	long offset = ARCH_GET_OFFSET(arg);
@@ -362,7 +362,7 @@ STATIC void *get_value_mem(struct lt_config_shared *cfg, struct lt_arg *arg,
 	return pval;
 }
 
-STATIC void *get_value_reg_integer(struct lt_config_shared *cfg,
+static void *get_value_reg_integer(struct lt_config_shared *cfg,
 			struct lt_arg *arg, void *regs, int ret)
 {
 //	struct user_regs_struct *regs_ret = regs;
@@ -447,7 +447,7 @@ read_string_remote(pid_t pid, char *addr, size_t slen) {
 	return result;
 }
 
-STATIC void* get_value(struct lt_config_shared *cfg, struct lt_arg *arg, pid_t target,
+static void* get_value(struct lt_config_shared *cfg, struct lt_arg *arg, pid_t target,
 	struct user_regs_struct *regs, size_t offset, int ret, size_t *next_off, int *err)
 {
 //	void *pval = NULL;
@@ -489,19 +489,24 @@ STATIC void* get_value(struct lt_config_shared *cfg, struct lt_arg *arg, pid_t t
 			return NULL;
 
 		if (next_off)
-			*next_off = extra_off + (sizeof(void *) * 2);
+			*next_off = offset + extra_off + (sizeof(void *) * 2);
 
 		*err = 0;
 		return str;
 	}
 
 	if (next_off) {
+		unsigned long oval=val;
 		if ((arg->type_id == LT_ARGS_TYPEID_INT32 || (arg->type_id == LT_ARGS_TYPEID_UINT32))) {
-			*next_off = extra_off + sizeof(int32_t);
+			*next_off = offset + sizeof(int32_t);
 			val >>= 32;
 			val &= 0x00000000ffffffff;
+		} else if ((arg->type_id == LT_ARGS_TYPEID_INT16 || (arg->type_id == LT_ARGS_TYPEID_UINT16))) {
+			*next_off = offset + sizeof(int16_t);
+			val >>= 48;
+			val &= 0x000000000000ffff;
 		} else {
-			*next_off = extra_off + sizeof(void *);
+			*next_off = offset + extra_off + sizeof(void *);
 		}
 	}
 
@@ -528,7 +533,7 @@ STATIC void* get_value(struct lt_config_shared *cfg, struct lt_arg *arg, pid_t t
 
 /* Process structure stored completelly in the 
    memory - pointed to by 'pval' arg. */
-STATIC int process_struct_mem(struct lt_config_shared *cfg, struct lt_arg *arg,
+static int process_struct_mem(struct lt_config_shared *cfg, struct lt_arg *arg,
 				void *pval, struct lt_args_data *data)
 {
 	struct lt_arg *a;
@@ -551,7 +556,7 @@ STATIC int process_struct_mem(struct lt_config_shared *cfg, struct lt_arg *arg,
 	return 0;
 }
 
-STATIC int process_struct_arg(struct lt_config_shared *cfg, struct lt_arg *arg,
+static int process_struct_arg(struct lt_config_shared *cfg, struct lt_arg *arg,
 			void *regs, struct lt_args_data *data, int ret)
 {
 	struct lt_arg *a;
@@ -577,7 +582,7 @@ STATIC int process_struct_arg(struct lt_config_shared *cfg, struct lt_arg *arg,
 	return 0;
 }
 
-STATIC void process_detailed_struct(struct lt_config_shared *cfg,
+static void process_detailed_struct(struct lt_config_shared *cfg,
 		struct lt_arg *arg, void *pval, struct lt_args_data *data, 
 		void *regs, int ret)
 {
@@ -594,7 +599,7 @@ STATIC void process_detailed_struct(struct lt_config_shared *cfg,
 	}
 }
 
-STATIC void
+static void
 enter_transformer_callstack(char *symname, struct user_regs_struct *inregs, void **args, size_t argcnt, lt_tsd_t *tsd)
 {
 
@@ -625,7 +630,7 @@ enter_transformer_callstack(char *symname, struct user_regs_struct *inregs, void
 	return;
 }
 
-STATIC int
+static int
 exit_transformer_callstack(char *symname, struct user_regs_struct *inregs, void ***pargs, size_t *pargcnt, lt_tsd_t *tsd)
 {
 	int i;
@@ -686,7 +691,9 @@ int lt_stack_process(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 			struct lt_arg *arg = asym->args[i];
 			int is_err;
 
+			size_t old = cur_off;
 			pval = get_value(cfg, arg, target, regs, cur_off, 0, &cur_off, &is_err);
+//			fprintf(stderr, "HEH: started with %zu, ended with %zu (%x)\n", old, cur_off
 			targs[i-1] = pval;
 		}
 
