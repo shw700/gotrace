@@ -234,7 +234,8 @@ EMPTY_COMMA:
 func_def:
 XDEF '(' ARGS ')' '(' NAME ',' NAME ')'
 {
-	struct lt_arg *farg = $1, *arg;
+	struct lt_arg **mret;
+	struct lt_arg *farg = $1, *arg, *arg2;
 
 	// Now handle the return type
 	if (!(arg = find_arg(scfg, $6, args_def_pod, LT_ARGS_DEF_POD_NUM, 0))) {
@@ -249,6 +250,26 @@ XDEF '(' ARGS ')' '(' NAME ',' NAME ')'
 	if (!arg) {
 			ERROR("unknown error[2] parsing return variable of type: %s\n", $6);
 	}
+
+	// Do the same for the next argument.
+	// XXX: This code needs to be made n-ary capable.
+
+	if (!(arg2 = find_arg(scfg, $8, args_def_pod, LT_ARGS_DEF_POD_NUM, 0))) {
+
+		if (!(arg2 = lt_args_getarg(scfg, "void", ANON_PREFIX, 1, 1, NULL))) {
+			ERROR("unknown error[1] parsing return variable of type: %s\n", $8);
+		}
+	} else {
+		arg2 = lt_args_getarg(scfg, $8, "ret2", 0, 1, NULL);
+	}
+
+	if (!arg2) {
+			ERROR("unknown error[2.2] parsing return variable of type: %s\n", $8);
+	}
+
+	mret = (struct lt_arg **)malloc(sizeof(*mret) * 2);
+	memset(mret, 0, sizeof(*mret)*2);
+	mret[0] = arg2;
 
 
 	// Swap the first argument with the last
@@ -268,7 +289,7 @@ XDEF '(' ARGS ')' '(' NAME ',' NAME ')'
 	free(farg);
 	farg = arg;
 
-	if (lt_args_add_sym(scfg, arg, $3, arg->collapsed))
+	if (lt_args_add_sym_mret(scfg, arg, mret, $3, arg->collapsed))
 		ERROR("failed to add symbol %s\n", arg->name);
 
 	// force creation of the new list head
@@ -311,7 +332,7 @@ XDEF '(' ARGS ')' NAME
 	free(farg);
 	farg = arg;
 
-	if (lt_args_add_sym(scfg, arg, $3, arg->collapsed))
+	if (lt_args_add_sym(scfg, arg, $3, arg->collapsed, NULL))
 		ERROR("failed to add symbol %s\n", arg->name);
 
 	// force creation of the new list head
@@ -322,7 +343,7 @@ XDEF '(' ARGS ')'
 {
 	struct lt_arg *arg = $1;
 
-	if (lt_args_add_sym(scfg, arg, $3, arg->collapsed))
+	if (lt_args_add_sym(scfg, arg, $3, arg->collapsed, NULL))
 		ERROR("failed to add symbol %s\n", arg->name);
 
 	/* force creation of the new list head */

@@ -141,6 +141,7 @@ struct lt_args_sym {
 	int collapsed;
 #define LT_ARGS_RET 0
 	struct lt_arg **args;
+	struct lt_arg **ret_args;
 };
 
 /* used in lt_args_cb_struct for argument type */
@@ -183,6 +184,8 @@ struct lt_enum_bm_elem* lt_args_get_enum_bm(struct lt_config_shared *cfg, const 
 int lt_args_add_struct(struct lt_config_shared *cfg, char *type_name,
 			struct lt_list_head *h);
 int lt_args_add_sym(struct lt_config_shared *cfg, struct lt_arg *sym,
+			struct lt_list_head *h, int collapsed, struct lt_args_sym **psym);
+int lt_args_add_sym_mret(struct lt_config_shared *cfg, struct lt_arg *sym, struct lt_arg **retn,
 			struct lt_list_head *h, int collapsed);
 int lt_args_add_typedef(struct lt_config_shared *cfg, const char *base,
 	const char *new, int pointer);
@@ -192,7 +195,7 @@ struct lt_arg* lt_args_getarg(struct lt_config_shared *cfg, const char *type,
 				const char *name, int pointer, int create, char *enum_name);
 int lt_args_cb_arg(struct lt_config_shared *cfg, struct lt_arg *arg,
 			void *pval, struct lt_args_data *data, int last,
-			int dspname);
+			int dspname, int multi_fmt);
 int lt_args_cb_struct(struct lt_config_shared *cfg, int type,
 			struct lt_arg *arg, void *pval,
 			struct lt_args_data *data, int last);

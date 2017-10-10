@@ -38,6 +38,11 @@ func Somefunc11(hi int16, hi2 int16, ok bool, hi3 uint16) {
 	fmt.Printf("The number is %v\n", hi)
 }
 
+func Somefunc12(hi int16) (string, string) {
+	fmt.Printf("The number is %v\n", hi)
+	return "hello there", "world!"
+}
+
 /*func Somefunc7(iarr []int) {
 	fmt.Println("GOT ARRAY: ", iarr)
 }
@@ -59,6 +64,7 @@ func main() {
 
 	Somefunc10(31337, 69, true, 13)
 	Somefunc11(31338, 70, false, 31)
+	Somefunc12(31339)
 
 	ok = Somefunc3("why")
 /*	arr := []int{666}

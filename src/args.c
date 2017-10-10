@@ -897,8 +897,22 @@ int lt_args_add_struct(struct lt_config_shared *cfg, char *type_name,
 	return 0;
 }
 
-int lt_args_add_sym(struct lt_config_shared *cfg, struct lt_arg *ret, 
+int lt_args_add_sym_mret(struct lt_config_shared *cfg, struct lt_arg *ret, struct lt_arg **retn,
 			struct lt_list_head *h, int collapsed)
+{
+	struct lt_args_sym *sym;
+	int res;
+
+	res = lt_args_add_sym(cfg, ret, h, collapsed, &sym);
+
+	if (!res)
+		sym->ret_args = retn;
+
+	return res;
+}
+
+int lt_args_add_sym(struct lt_config_shared *cfg, struct lt_arg *ret,
+			struct lt_list_head *h, int collapsed, struct lt_args_sym **psym)
 {
 	ENTRY e, *ep;
 	struct lt_args_sym *sym;
@@ -965,6 +979,9 @@ int lt_args_add_sym(struct lt_config_shared *cfg, struct lt_arg *ret,
 	} else
 		PRINT_VERBOSE(cfg, 3, "got symbol %s (%d args)\n",
 				sym->name, sym->argcnt);
+
+	if (psym)
+		*psym = sym;
 
 	return 0;
 }
@@ -1654,7 +1671,7 @@ out:
 }
 
 int lt_args_cb_arg(struct lt_config_shared *cfg, struct lt_arg *arg, void *pval, 
-		   struct lt_args_data *data, int last, int dspname)
+		   struct lt_args_data *data, int last, int dspname, int multi_fmt)
 {
 	int len = data->arglen;
 
@@ -1671,8 +1688,12 @@ int lt_args_cb_arg(struct lt_config_shared *cfg, struct lt_arg *arg, void *pval,
 		char fmtbuf[16];
 		size_t max_append;
 
-		if (cfg->fmt_colors)
-			snprintf(fmtbuf, sizeof(fmtbuf), "%s, %s", BOLD, BOLDOFF);
+		if (cfg->fmt_colors) {
+			if (multi_fmt)
+				snprintf(fmtbuf, sizeof(fmtbuf), "%s, %s", ULINEOFF, ULINE);
+			else
+				snprintf(fmtbuf, sizeof(fmtbuf), "%s, %s", BOLD, BOLDOFF);
+		}
 		else
 			strcpy(fmtbuf, ", ");
 

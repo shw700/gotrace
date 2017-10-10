@@ -285,19 +285,6 @@ int sym_exit(const char *symname, void *ptr, char *lib_from, char *lib_to, pid_t
 	return 0;
 }
 
-static int check_pid()
-{
-	pid_t pid = getpid();
-
-	PRINT_VERBOSE(&cfg, 1, "tid = %d, cfg tid = %d\n",
-			pid, lt_sh(&cfg, pid));
-
-	if (pid != lt_sh(&cfg, pid))
-		return -1;
-
-	return 0;
-}
-
 #define CHECK_PID(ret) \
 do { \
 	if (cfg.sh->not_follow_fork && \

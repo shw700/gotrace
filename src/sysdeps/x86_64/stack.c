@@ -341,7 +341,7 @@ static int classificate(struct lt_config_shared *cfg, struct lt_args_sym *sym, l
 	return 0;
 }
 
-static void *get_value_mem(struct lt_config_shared *cfg, struct lt_arg *arg,
+/*static void *get_value_mem(struct lt_config_shared *cfg, struct lt_arg *arg,
 			void *regs, int ret)
 {
 	long offset = ARCH_GET_OFFSET(arg);
@@ -352,17 +352,17 @@ static void *get_value_mem(struct lt_config_shared *cfg, struct lt_arg *arg,
 //		pval = base + offset;
 	} else {
 //		void *base = (void*) ((struct struct user_regs_struct *) regs)->lr_rsp;
-//		pval = base +            /* current stack pointer */
-//		       sizeof(void*) +   /* return function address */
+//		pval = base +            // current stack pointer
+//		       sizeof(void*) +   // return function address
 //		       offset;
 	}
 
 	PRINT_VERBOSE(cfg, 2, "offset = %ld, %s = %p, ret = %d\n",
 			offset, arg->name, pval, ret);
 	return pval;
-}
+}*/
 
-static void *get_value_reg_integer(struct lt_config_shared *cfg,
+/*static void *get_value_reg_integer(struct lt_config_shared *cfg,
 			struct lt_arg *arg, void *regs, int ret)
 {
 //	struct user_regs_struct *regs_ret = regs;
@@ -407,7 +407,7 @@ static void *get_value_reg_integer(struct lt_config_shared *cfg,
 	PRINT_VERBOSE(cfg, 2, "argument %s = %p (%lx)\n",
 			arg->name, pval, *((u_long*)pval));
 	return pval;
-}
+}*/
 
 char *
 read_string_remote(pid_t pid, char *addr, size_t slen) {
@@ -816,8 +816,6 @@ int lt_stack_process(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 
 		}
 
-//	printf("555\n");
-
 		if ((is_err) && 
 		    (arg->pointer || ((LT_ARGS_DTYPE_STRUCT != arg->dtype) &&
 		    (arg->type_id != LT_ARGS_TYPEID_FNPTR)))) {
@@ -827,7 +825,7 @@ int lt_stack_process(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 			continue;
 		}
 
-		lt_args_cb_arg(cfg, arg, pval, data, last, 1);
+		lt_args_cb_arg(cfg, arg, pval, data, last, 1, 0);
 
 		if ((cfg->args_detailed) && 
 		    (LT_ARGS_DTYPE_STRUCT == arg->dtype))
@@ -841,12 +839,17 @@ int lt_stack_process_ret(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 			pid_t target, struct user_regs_struct *iregs, struct user_regs_struct *regs, struct lt_args_data *data, int silent,
 			lt_tsd_t *tsd)
 {
-	struct lt_arg *arg;
+	struct lt_arg *arg, **rarg;
 	void *pval;
-	size_t ret_offset = 0, i;
-	int needs_callstack = 0, is_err;
+	size_t ret_offset = 0, nextra_args = 0, i;
+	int needs_callstack = 0;
 
-//	ret_offset = sizeof(void *);
+	rarg = asym->ret_args;
+	while (rarg && *rarg) {
+		nextra_args++;
+		rarg++;
+	}
+
 	for(i = 1; i < asym->argcnt; i++) {
 		struct lt_arg *arg = asym->args[i];
 
@@ -857,83 +860,105 @@ int lt_stack_process_ret(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 		}
 	}
 
-	arg = asym->args[LT_ARGS_RET];
-	pval = get_value(cfg, arg, target, regs, ret_offset, 1, NULL, &is_err);
-	needs_callstack = ((asym->args[LT_ARGS_RET]->latrace_custom_func_transformer != NULL) ||
-		(asym->args[LT_ARGS_RET]->latrace_custom_func_intercept != NULL));
+	for (i = 0; i < nextra_args+1; i++) {
+		int last = (i + 1) == nextra_args+1, is_err;
 
-	if (needs_callstack || asym->args[LT_ARGS_RET]->latrace_custom_struct_transformer) {
-		void **inargs = NULL;
-		void *retval = pval;
-		size_t inargs_size = 0;
-		int tres = -1;
+		if (!i)
+			arg = asym->args[LT_ARGS_RET];
+		else
+			arg = asym->ret_args[i-1];
 
-//		if (!silent && exit_transformer_callstack(asym->name, iregs, &inargs, &inargs_size, tsd) < 0) {
-		if (needs_callstack && exit_transformer_callstack(asym->name, iregs, &inargs, &inargs_size, tsd) < 0) {
-			PRINT_ERROR_SAFE("%s", "Error retrieving function entry arguments from transformer call stack\n");
-			inargs = NULL;
-			inargs_size = 0;
-		}
+		pval = get_value(cfg, arg, target, regs, ret_offset, 1, &ret_offset, &is_err);
+		needs_callstack = ((asym->args[LT_ARGS_RET]->latrace_custom_func_transformer != NULL) ||
+			(asym->args[LT_ARGS_RET]->latrace_custom_func_intercept != NULL));
 
-		/* Special null value for functions that are declared to return type void */
-		retval = !retval ? (void *)-1 : retval;
+		if (needs_callstack || asym->args[LT_ARGS_RET]->latrace_custom_struct_transformer) {
+			void **inargs = NULL;
+			void *retval = pval;
+			size_t inargs_size = 0;
+			int tres = -1;
 
-		if (asym->args[LT_ARGS_RET]->latrace_custom_func_intercept) {
+	//		if (!silent && exit_transformer_callstack(asym->name, iregs, &inargs, &inargs_size, tsd) < 0) {
+			if (needs_callstack && exit_transformer_callstack(asym->name, iregs, &inargs, &inargs_size, tsd) < 0) {
+				PRINT_ERROR_SAFE("%s", "Error retrieving function entry arguments from transformer call stack\n");
+				inargs = NULL;
+				inargs_size = 0;
+			}
 
-			if (tsd->fault_reason) {
-				fprintf(stderr, "Error: caught fatal condition in custom func intercept exit for %s: %s\n",
-					asym->name, tsd->fault_reason);
-				tsd->fault_reason = NULL;
-			} else
-				asym->args[LT_ARGS_RET]->latrace_custom_func_intercept(inargs, inargs_size, retval);
+			/* Special null value for functions that are declared to return type void */
+			retval = !retval ? (void *)-1 : retval;
 
-		}
+			if (asym->args[LT_ARGS_RET]->latrace_custom_func_intercept) {
 
-		if (!silent && asym->args[LT_ARGS_RET]->latrace_custom_func_transformer) {
+				if (tsd->fault_reason) {
+					fprintf(stderr, "Error: caught fatal condition in custom func intercept exit for %s: %s\n",
+						asym->name, tsd->fault_reason);
+					tsd->fault_reason = NULL;
+				} else
+					asym->args[LT_ARGS_RET]->latrace_custom_func_intercept(inargs, inargs_size, retval);
 
-			if (tsd->fault_reason) {
-				fprintf(stderr, "Error: caught fatal condition in custom func transformer exit for %s: %s\n",
-					asym->name, tsd->fault_reason);
-				tsd->fault_reason = NULL;
-			} else {
-				tres = asym->args[LT_ARGS_RET]->latrace_custom_func_transformer(inargs,
-					inargs_size, data->args_buf+data->args_totlen, data->args_len-data->args_totlen, retval);
+			}
+
+			if (!silent && asym->args[LT_ARGS_RET]->latrace_custom_func_transformer) {
+
+				if (tsd->fault_reason) {
+					fprintf(stderr, "Error: caught fatal condition in custom func transformer exit for %s: %s\n",
+						asym->name, tsd->fault_reason);
+					tsd->fault_reason = NULL;
+				} else {
+					tres = asym->args[LT_ARGS_RET]->latrace_custom_func_transformer(inargs,
+						inargs_size, data->args_buf+data->args_totlen, data->args_len-data->args_totlen, retval);
+				}
+
+			}
+
+			if (!silent && (tres < 0) && asym->args[LT_ARGS_RET]->latrace_custom_struct_transformer && !is_err &&
+				(!asym->args[LT_ARGS_RET]->fmt || !*(asym->args[LT_ARGS_RET]->fmt))) {
+
+				if (tsd->fault_reason) {
+					fprintf(stderr, "Error: caught fatal condition in custom struct transformer exit for %s: %s\n",
+						asym->name, tsd->fault_reason);
+					tsd->fault_reason = NULL;
+				} else {
+					tres = asym->args[LT_ARGS_RET]->latrace_custom_struct_transformer(*((void**) pval), data->args_buf+data->args_totlen, data->args_len-data->args_totlen);
+				}
+
+			}
+
+			if (inargs)
+				XFREE(inargs);
+
+			if (silent)
+				return 0;
+
+			if (!tres) {
+				data->args_totlen += strlen(data->args_buf+data->args_totlen);
+				return tres;
 			}
 
 		}
 
-		if (!silent && (tres < 0) && asym->args[LT_ARGS_RET]->latrace_custom_struct_transformer && !is_err &&
-			(!asym->args[LT_ARGS_RET]->fmt || !*(asym->args[LT_ARGS_RET]->fmt))) {
+		if ((arg->type_id != LT_ARGS_TYPEID_VOID) || (arg->pointer))
+			lt_args_cb_arg(cfg, arg, pval, data, last, 0, 1);
 
-			if (tsd->fault_reason) {
-				fprintf(stderr, "Error: caught fatal condition in custom struct transformer exit for %s: %s\n",
-					asym->name, tsd->fault_reason);
-				tsd->fault_reason = NULL;
-			} else {
-				tres = asym->args[LT_ARGS_RET]->latrace_custom_struct_transformer(*((void**) pval), data->args_buf+data->args_totlen, data->args_len-data->args_totlen);
-			}
-
-		}
-
-		if (inargs)
-			XFREE(inargs);
-
-		if (silent)
-			return 0;
-
-		if (!tres) {
-			data->args_totlen += strlen(data->args_buf+data->args_totlen);
-			return tres;
-		}
+		if ((cfg->args_detailed) &&
+		    (LT_ARGS_DTYPE_STRUCT == arg->dtype))
+			process_detailed_struct(cfg, arg, pval, data, regs, 0);
 
 	}
 
-	if ((arg->type_id != LT_ARGS_TYPEID_VOID) || (arg->pointer))
-		lt_args_cb_arg(cfg, arg, pval, data, 1, 0);
+	if (cfg->fmt_colors) {
+		char *fmtptr;
+		size_t left = data->arglen - data->args_totlen;
 
-	if ((cfg->args_detailed) &&
-	    (LT_ARGS_DTYPE_STRUCT == arg->dtype))
-		process_detailed_struct(cfg, arg, pval, data, regs, 0);
+		if (left < strlen(ULINEOFF))
+			fmtptr = data->args_buf + data->args_totlen - (strlen(ULINEOFF) + 1);
+		else
+			fmtptr = data->args_buf + data->args_totlen;
+
+		strcpy(fmtptr, ULINEOFF);
+		data->args_totlen += strlen(ULINEOFF);
+	}
 
 	return 0;
 }
