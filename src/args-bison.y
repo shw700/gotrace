@@ -101,8 +101,6 @@ entry struct_def
 |
 entry enum_def
 |
-entry gofunc_def
-|
 entry func_def
 |
 entry import_def
@@ -167,7 +165,7 @@ STRUCT_DEF DEF ';'
 
 /* enum definitions */
 enum_def:
-CONST NAME '(' CONST_DEF NEWLINE
+CONST NAME '(' CONST_DEF ')'
 {
 	switch(lt_args_add_enum(scfg, $2, 0, $4)) {
 	case -1:
@@ -178,9 +176,9 @@ CONST NAME '(' CONST_DEF NEWLINE
 }
 
 CONST_DEF:
-CONST_DEF NEWLINE CONST_ELEM
+CONST_DEF CONST_ELEM NEWLINE
 {
-	struct lt_enum_elem *enum_elem = $3;
+	struct lt_enum_elem *enum_elem = $2;
 	struct lt_list_head *h = $1;
 
 	if (!h) {
@@ -222,11 +220,6 @@ NAME
 		ERROR("failed to add enum[3] '%s = undef'\n", $1);
 }
 |
-')' NEWLINE
-{
-	$$ = NULL;
-}
-|
 EMPTY_COMMA
 {
 	$$ = NULL;
@@ -237,41 +230,51 @@ EMPTY_COMMA:
  /* empty */
 
 
-gofunc_def:
-FUNC NAME '(' ARGS ')' ';' ';'
-{
-	printf("WOW GO GO!\n");
-
-/*	struct lt_arg *arg;
-
-	if (NULL == (arg = lt_args_getarg(scfg, $1, ANON_PREFIX, 0, 1, NULL))) {
-
-		if (getenum(scfg, $1) == NULL)
-			ERROR("unknown argument type[6a] - %s\n", $1);
-
-		if (NULL == (arg = lt_args_getarg(scfg, "int", ANON_PREFIX, 0, 1, $1)))
-			ERROR("unknown argument type[6b] - %s\n", $1);
-
-	}
-
-	$$ = arg; */
-
-
-
-
-
-
-/*	struct lt_arg *arg = $2;
-
-	if (lt_args_add_sym(scfg, arg, $4, arg->collapsed))
-		ERROR("failed to add symbol %s\n", arg->name); */
-
-	/* force creation of the new list head */
-	$4 = NULL;
-}
-
 /* function definitions */
 func_def:
+XDEF '(' ARGS ')' '(' NAME ',' NAME ')'
+{
+	struct lt_arg *farg = $1, *arg;
+
+	// Now handle the return type
+	if (!(arg = find_arg(scfg, $6, args_def_pod, LT_ARGS_DEF_POD_NUM, 0))) {
+
+		if (!(arg = lt_args_getarg(scfg, "void", ANON_PREFIX, 1, 1, NULL))) {
+			ERROR("unknown error[1] parsing return variable of type: %s\n", $6);
+		}
+	} else {
+		arg = lt_args_getarg(scfg, $6, "ret", 0, 1, NULL);
+	}
+
+	if (!arg) {
+			ERROR("unknown error[2] parsing return variable of type: %s\n", $6);
+	}
+
+
+	// Swap the first argument with the last
+	// But we do need to preserve some information first
+	arg->name ? free(arg->name) : arg->name;
+	arg->fmt ? free(arg->fmt) : arg->fmt;
+	arg->bitmask_class ? free(arg->bitmask_class) : arg->bitmask_class;
+
+	arg->name = farg->name;
+	arg->fmt = farg->fmt;
+	arg->bitmask_class = farg->bitmask_class;
+	arg->collapsed = farg->collapsed;
+	arg->latrace_custom_struct_transformer = farg->latrace_custom_struct_transformer;
+	arg->latrace_custom_func_transformer = farg->latrace_custom_func_transformer;
+	arg->latrace_custom_func_intercept = farg->latrace_custom_func_intercept;
+
+	free(farg);
+	farg = arg;
+
+	if (lt_args_add_sym(scfg, arg, $3, arg->collapsed))
+		ERROR("failed to add symbol %s\n", arg->name);
+
+	// force creation of the new list head
+	$3 = NULL;
+}
+|
 XDEF '(' ARGS ')' NAME
 {
 	struct lt_arg *farg = $1, *arg;

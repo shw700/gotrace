@@ -18,7 +18,7 @@ func runtime.osinit()
 //func convT2E(t *_type, elem unsafe.Pointer) (e eface)
 func runtime.convT2E(t *_type, elem unsafe.Pointer) elem
 //func assertE2T2(typ *byte, iface any) (ret any, ok bool)
-func runtime.assertE2T2(typ *byte, iface uintptr) ret
+func runtime.assertE2T2(typ *byte, iface uintptr) (ret, bool)
 //func assertI2T2(typ *byte, iface any) (ret any, ok bool)
 func runtime.assertI2T2(typ *byte, iface uintptr) ret
 //func efacethash(i1 any) (ret uint32)
@@ -90,7 +90,7 @@ func runtime.GOMAXPROCS(n int) int
 // syscalls
 func runtime.entersyscall(dummy int32)
 //func Syscall(trap int64, a1, a2, a3 int64) (r1, r2, err int64)
-func syscall.Syscall(trap int64, a1 int64, a2 int64, a3 int64) r1
+func syscall.Syscall(trap int64, a1 int64=SYSCALL_NO, a2 int64/p, a3 int64) r1
 func runtime.exitsyscall(dummy int32)
 func runtime.exitsyscallfast() bool
 
