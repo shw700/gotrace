@@ -454,7 +454,9 @@ int lt_out_exit(struct lt_config_shared *cfg,
 		return 0;
 	}
 
-	if (!strcmp(argbuf, " = "))
+#define EQ_NO_COLOR	" = "
+#define EQ_ANSI		(" = "ULINEOFF)
+	if (!strcmp(argbuf, EQ_NO_COLOR) || !strcmp(argbuf, EQ_ANSI))
 		strcpy(argbuf, ";");
 
 	if (exited) {
