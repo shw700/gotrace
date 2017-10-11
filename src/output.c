@@ -256,7 +256,7 @@ int lt_out_entry(struct lt_config_shared *cfg,
 	const char *cur_color = NULL;
 	const char *end_line = "{\n";
 	char *outbuf = NULL;
-	int buffered;
+	int buffered, has_args = 1;
 
 //	fprintf(stderr, "lt_out_entry: %s / %d\n", symname, tid);
 
@@ -343,9 +343,14 @@ int lt_out_entry(struct lt_config_shared *cfg,
 	else if (collapsed == COLLAPSED_TERSE)
 		end_line = "";
 
+	if (!strcmp(argbuf, " "))
+		argbuf[0] = 0;
+	else if (!*argbuf)
+		has_args = 0;
+
 	/* Print the symbol and arguments. */
 	if (cur_color) {
-		if (*argbuf)
+		if (has_args)
 			PRINT_DATA(buffered, "%s%s%s%s(%s%s%s) %s",
 					BOLD, cur_color, symname, RESET,
 					cur_color, argbuf, RESET, end_line);
@@ -353,7 +358,7 @@ int lt_out_entry(struct lt_config_shared *cfg,
 			PRINT_DATA(buffered, "%s%s%s %c\n",
 					cur_color, symname, RESET, cfg->braces ? '{' : ' ');
 	} else {
-		if (*argbuf)
+		if (has_args)
 			PRINT_DATA(buffered, "%s(%s) %s", symname, argbuf, end_line);
 		else
 			PRINT_DATA(buffered, "%s %c\n",

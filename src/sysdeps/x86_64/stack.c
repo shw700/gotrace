@@ -743,7 +743,7 @@ int lt_stack_process(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 		return -1;
 
 	if (asym->argcnt == 1) {
-//		snprintf(data->args_buf+data->args_totlen, data->args_len-data->args_totlen, "void");
+		snprintf(data->args_buf+data->args_totlen, data->args_len-data->args_totlen, " ");
 		data->args_totlen += strlen(data->args_buf+data->args_totlen);
 		return 0;
 	}

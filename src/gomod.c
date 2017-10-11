@@ -92,7 +92,7 @@ client_socket_loop(void *arg) {
 				break;
 			}
 
-			fprintf(stderr, "Loop received set intercept request (n=%u).\n", (hdr.size / sizeof(void *)));
+			fprintf(stderr, "Loop received set intercept request (n=%u).\n", (unsigned int)(hdr.size / sizeof(void *)));
 		}
 
 		fprintf(stderr, "Loop read all data ok\n");

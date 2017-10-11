@@ -104,6 +104,27 @@ int set_intercept(pid_t pid, void *addr);
 int set_ret_intercept(pid_t pid, const char *fname, void *addr, size_t *pidx);
 int is_intercept_excluded(const char *fname);
 
+void cleanup(void);
+void handle_int(int signo);
+
+
+void
+cleanup(void) {
+	if (gotrace_socket_path[0])
+		unlink(gotrace_socket_path);
+
+	return;
+}
+
+void
+handle_int(int signo) {
+	if (signo == SIGINT) {
+		fprintf(stderr, "Caught SIGINT... shutting down gracefully.\n");
+		exit(EXIT_SUCCESS);
+	}
+
+	return;
+}
 
 
 static int test_fd = -1;
@@ -905,6 +926,10 @@ main(int argc, char *argv[]) {
 	}
 
 	snprintf(gotrace_socket_path, sizeof(gotrace_socket_path), "/tmp/gotrace.sock.%d", getpid());
+	atexit(cleanup);
+
+	if (signal(SIGINT, handle_int) == SIG_ERR)
+		perror("signal(SIGINT,...)");
 
 	trace_program(progname, &argv[2]);
 	exit(-1);
