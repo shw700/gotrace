@@ -496,7 +496,8 @@ static void* get_value(struct lt_config_shared *cfg, struct lt_arg *arg, pid_t t
 	}
 
 	if (next_off) {
-		unsigned long oval=val;
+//		unsigned long oval=val;
+
 		if ((arg->type_id == LT_ARGS_TYPEID_INT32 || (arg->type_id == LT_ARGS_TYPEID_UINT32))) {
 			*next_off = offset + sizeof(int32_t);
 			val >>= 32;
@@ -691,7 +692,7 @@ int lt_stack_process(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 			struct lt_arg *arg = asym->args[i];
 			int is_err;
 
-			size_t old = cur_off;
+//			size_t old = cur_off;
 			pval = get_value(cfg, arg, target, regs, cur_off, 0, &cur_off, &is_err);
 //			fprintf(stderr, "HEH: started with %zu, ended with %zu (%x)\n", old, cur_off
 			targs[i-1] = pval;
@@ -869,6 +870,12 @@ int lt_stack_process_ret(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 			arg = asym->ret_args[i-1];
 
 		pval = get_value(cfg, arg, target, regs, ret_offset, 1, &ret_offset, &is_err);
+
+/*		if (is_err) {
+			PRINT_ERROR("Unexpected error occurred decoding return value from function!");
+			return -1;
+		} */
+
 		needs_callstack = ((asym->args[LT_ARGS_RET]->latrace_custom_func_transformer != NULL) ||
 			(asym->args[LT_ARGS_RET]->latrace_custom_func_intercept != NULL));
 

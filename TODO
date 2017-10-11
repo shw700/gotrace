@@ -1,2 +1,5 @@
-fix parsing of primitives < 64 bits wide on stack
+* are single argument returns broken?
+* fix parsing of primitives < 64 bits wide on stack
 remove transformer call stacks
+* cleanup gotrace socket
+* functions that take no params should still display ()

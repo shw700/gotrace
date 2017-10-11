@@ -145,7 +145,6 @@ struct lt_config_shared {
 	int hide_tid;
 	int not_follow_exec;
 	int not_follow_fork;
-	int global_symbols;
 
 	/* for 'not_follow_fork' */
 	pid_t pid;
@@ -389,5 +388,17 @@ do { \
 #endif
 
 #define IGN_RET(x)	{ if (x) {} }
+
+#define GOTRACE_SOCKET_ENV	"GOTRACE_SOCKET_PATH"
+
+#define GOMOD_DATA_MAGIC	0x93
+#define GOMOD_RT_SET_INTERCEPT	1
+#define GOMOD_RT_CALL_FUNC	2
+typedef struct __attribute__((packed)) gomod_data_hdr {
+	uint8_t magic;
+	uint16_t size;
+	uint8_t reqtype;
+} gomod_data_hdr_t;
+
 
 #endif // !CONFIG_H

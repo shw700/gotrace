@@ -93,6 +93,8 @@ func runtime.entersyscall(dummy int32)
 func syscall.Syscall(trap int64, a1 int64=SYSCALL_NO, a2 int64/p, a3 int64) r1
 func runtime.exitsyscall(dummy int32)
 func runtime.exitsyscallfast() bool
+//func asmcgocall(fn, arg unsafe.Pointer) int32
+func runtime.asmcgocall(fn unsafe.Pointer, arg unsafe.Pointer) int32
 
 func runtime.getcallerpc/p() uintptr
 func runtime.getcallersp/p(argp unsafe.Pointer) uintptr
@@ -104,8 +106,10 @@ func runtime.exit(code int32)
 func runtime.sleep(ms int32) int32
 func runtime.usleep(usec uint32)
 func runtime.futexsleep(addr *uint32, val uint32, ns int64)
+func runtime.notetsleep(n *note, ns int64) bool
 func runtime.nanotime() int64
 func runtime.timediv(v int64, div int32, rem *int32)
+func runtime.timerproc(tb *timersBucket)
 
 // Errors
 func errors.New(text string) error
@@ -119,9 +123,30 @@ func runtime.memmove(to *any, frm *any, length uintptr)
 
 func runtime.lock(l *mutex)
 func runtime.unlock(l *mutex)
+//func futex(addr unsafe.Pointer, op int32, val uint32, ts, addr2 unsafe.Pointer, val3 uint32) int32
+func runtime.futex(addr unsafe.Pointer, op int32, val uint32, ts unsafe.Pointer, addr2 unsafe.Pointer, val3 uint32) int32
 
 func runtime.gogo(buf *gobuf)
 
 // Format
 //func parsenum(s string, start, end int) (num int, isnum bool, newi int
 func fmt.parsenum(s string, start int, end int) int
+
+//func runqsteal(_p_, p2 *p, stealRunNextG bool) *g
+func runtime.runqsteal(_p_ *p, p2 *p, stealRunNextG bool) g
+//func runqgrab(_p_ *p, batch *[256]guintptr, batchHead uint32, stealRunNextG bool) uint32
+func runtime.runqgrab(_p_ *p, batch *guintptr, batchHead uint32, stealRunNextG bool) uint32
+//func runqget(_p_ *p) (gp *g, inheritTime bool)
+func runtime.runqget(_p_ *p) (g, inheritTime)
+
+func runtime.return0()
+//func systemstack(fn func())
+func runtime.systemstack(func pfn)
+
+func runtime.checkdead()
+func runtime.schedule()
+func runtime.mput(mp *m)
+//func releasep() *p
+func runtime.releasep() p
+//func pidleput(_p_ *p
+func runtime.pidleput(_p_ *p)

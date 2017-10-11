@@ -1,7 +1,21 @@
 package main
 
+
 import "fmt"
 //import "net"
+import "time"
+//import "github.com/cookieo9/goffi/dlopen"
+
+const LIBPATH = "/home/shw/gotrace/libgomod.so.0.1.1"
+
+
+func import_lib() {
+	fmt.Println("HI!!!")
+//	handle, err := dlopen.Open(LIBPATH, dlopen.NOW)
+//	fmt.Printf("err = %v / handle = %v\n", err, handle)
+	return
+}
+
 
 func Somefunc(hi int) {
 	fmt.Println("Somefunc(): input =", hi)
@@ -52,7 +66,8 @@ func Somefunc8(c net.Conn) {
 } */
 
 func main() {
-	fmt.Println("HEH2")
+	fmt.Println("GO TEST GO TEST")
+	import_lib()
 	Somefunc(0x41424344)
 	Somefunc2(0x11223344, 0x66778899)
 	var ok int = 1
@@ -67,6 +82,10 @@ func main() {
 	Somefunc12(31339)
 
 	ok = Somefunc3("why")
+
+	fmt.Println("go program will sleep for 10 seconds")
+	time.Sleep(10 * time.Second)
+
 /*	arr := []int{666}
 	Somefunc7(arr)
 

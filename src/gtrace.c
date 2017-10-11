@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <stddef.h>
 #include <sys/ptrace.h>
 #include <sys/prctl.h>
 #include <signal.h>
@@ -9,6 +10,9 @@
 #include <sys/wait.h>
 #include <sys/user.h>
 #include <errno.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <pthread.h>
 
 // TODO: waitpid(..., WUNTRACED)
 
@@ -16,22 +20,13 @@
 #include "elfh.h"
 #include "args.h"
 
-//#include "zydis/include/Zydis/Decoder.h"
-
-
-#define ADDR_SOMEFUNC	((void *)0x401000)
-#define ADDR_SOMEFUNC2	((void *)0x401190)
-#define ADDR_SOMEFUNC3	((void *)0x401330)
-#define ADDR_SOMEFUNC4	((void *)0x4014d0)
-#define ADDR_SOMEFUNC5	((void *)0x4017e0)
-
 
 #define DEBUG_LEVEL	0
 
 #define DEBUG_PRINT(lvl,...)	do {	\
-						if (lvl <= DEBUG_LEVEL)	\
-							fprintf(stderr, __VA_ARGS__);	\
-					} while (0)
+					if (lvl <= DEBUG_LEVEL)	\
+						fprintf(stderr, __VA_ARGS__);	\
+				} while (0)
 
 
 typedef enum {
@@ -60,8 +55,9 @@ long trace_flags = PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACECLONE | PTRACE_O_TRACEV
 
 struct lt_config_audit cfg;
 
+char gotrace_socket_path[128];
+
 char *excluded_intercepts[] = {
-	// hmm:
 //	"runtime.atomicstorep",
 //	"runtime.(*waitq).dequeue",
 //	"runtime.mallocgc",
@@ -97,10 +93,148 @@ char *excluded_intercepts[] = {
 
 extern char *read_string_remote(pid_t pid, char *addr, size_t slen);
 
+void *call_remote_func(pid_t pid, unsigned char reqtype, void *data, size_t dsize, size_t *psize);
+
+void start_listener(void);
+void *gotrace_socket_loop(void *param);
+
 void dump_wait_state(pid_t pid, int status, int force);
 int set_all_intercepts(pid_t pid);
 int set_intercept(pid_t pid, void *addr);
 int set_ret_intercept(pid_t pid, const char *fname, void *addr, size_t *pidx);
+int is_intercept_excluded(const char *fname);
+
+
+
+static int test_fd = -1;
+
+void *
+call_remote_func(pid_t pid, unsigned char reqtype, void *data, size_t dsize, size_t *psize)
+{
+	gomod_data_hdr_t hdr;
+	int res;
+
+	if (dsize > 0xffff) {
+		PRINT_ERROR("Error calling gomod function with oversized data buffer (%zu bytes)\n", dsize);
+		return NULL;
+	}
+
+	memset(&hdr, 0, sizeof(hdr));
+	hdr.magic = GOMOD_DATA_MAGIC;
+	hdr.size = dsize;
+	hdr.reqtype = reqtype;
+
+	int fd = test_fd;
+
+	if ((res = send(fd, &hdr, sizeof(hdr), 0)) != sizeof(hdr)) {
+		if (res == -1)
+			perror("send");
+
+		PRINT_ERROR("%s", "Error encountered in calling gomod function.\n");
+		return NULL;
+	}
+
+	if ((res = send(fd, data, dsize, 0)) != dsize) {
+		if (res == -1)
+			perror("send");
+
+		PRINT_ERROR("%s", "Error encountered in calling gomod function.\n");
+		return NULL;
+	}
+
+	fprintf(stderr, "Sent and waiting to receive\n");
+
+	if ((res = recv(fd, &hdr, sizeof(hdr), MSG_WAITALL)) != sizeof(hdr)) {
+		if (res == -1)
+			perror("recv");
+
+		PRINT_ERROR("%s", "Error encountered in retrieving remote result of gomod function.\n");
+		return NULL;
+	}
+
+	if (hdr.magic != GOMOD_DATA_MAGIC) {
+		PRINT_ERROR("%s", "Error retrieving gomod function result with unexpected data formatting.\n");
+		return NULL;
+	} else if (hdr.reqtype != reqtype) {
+		PRINT_ERROR("%s", "Error retrieving gomod function result with mismatched request type.\n");
+		return NULL;
+	}
+
+	PRINT_ERROR("GO MOD RETURN SIZE = %u bytes\n", hdr.size);
+
+	return NULL;
+}
+
+void *
+gotrace_socket_loop(void *param) {
+	int lfd;
+
+	fprintf(stderr, "Listening for child connections!\n");
+	lfd = (int)((uintptr_t)param);
+
+	while (1) {
+		struct sockaddr_un s_un;
+		socklen_t slen;
+		int cfd;
+
+		fprintf(stderr, "Listening...\n");
+
+		if ((cfd = accept(lfd, (struct sockaddr *)&s_un, &slen)) == -1) {
+			perror("accept");
+			exit(EXIT_FAILURE);
+		}
+
+		fprintf(stderr, "ACCEPTED!\n");
+		test_fd = cfd;
+
+	void *heh;
+	#define XDATA "123456781234567812345678\x00"
+	heh = call_remote_func(-1, GOMOD_RT_SET_INTERCEPT, XDATA, strlen(XDATA), NULL);
+	fprintf(stderr, "call result = %p\n", heh);
+
+		fprintf(stderr, "Sleeping...\n");
+		sleep(2);
+		fprintf(stderr, "End sleep.\n");
+		break;
+	}
+
+	return NULL;
+}
+
+void
+start_listener(void) {
+	static struct sockaddr_un s_un;
+	socklen_t ssize;
+	pthread_t ptid;
+	int fd;
+
+	if ((fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1) {
+		perror("socket");
+		exit(EXIT_FAILURE);
+	}
+
+	memset(&s_un, 0, sizeof(s_un));
+	s_un.sun_family = AF_UNIX;
+	strncpy(s_un.sun_path, gotrace_socket_path, sizeof (s_un.sun_path));
+	ssize = offsetof(struct sockaddr_un, sun_path) + strlen(s_un.sun_path);
+
+	if (bind(fd, (struct sockaddr *)&s_un, ssize) == -1) {
+		perror("bind");
+		exit(EXIT_FAILURE);
+	}
+
+	if (listen(fd, 10) == -1) {
+		perror("listen");
+		exit(EXIT_FAILURE);
+	}
+
+	if (pthread_create(&ptid, NULL, gotrace_socket_loop, (void *)((uintptr_t)fd)) != 0) {
+		perror("pthread_create");
+		exit(EXIT_FAILURE);
+	}
+
+	return;
+}
 
 
 int
@@ -165,7 +299,7 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 	long retrace, ret_addr;
 	size_t i, ra;
 	int ret, is_return = 0;
-	int last_ref = 0;
+//	int last_ref = 0;
 
 	if (!WIFSTOPPED(status) || (WSTOPSIG(status) != SIGTRAP)) {
 		dump_wait_state(pid, status, 1);
@@ -227,8 +361,8 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 
 		is_return = 1;
 
-		if (__sync_sub_and_fetch(&(saved_ret_prologs[ra].refcnt), 1) == 0)
-			last_ref = 1;
+//		if (__sync_sub_and_fetch(&(saved_ret_prologs[ra].refcnt), 1) == 0)
+//			last_ref = 1;
 
 //		printf("HEH: return refcnt[%zu] for %s (%p) is %d; last ref = %d\n", ra, saved_ret_prologs[ra].fname, saved_ret_prologs[ra].addr, saved_ret_prologs[ra].refcnt, last_ref);
 	}
@@ -295,6 +429,11 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 	} else {
 //	fprintf(stderr, "HEH: %d / %s / %p\n", pid, symname, tsdx);
 		ret = sym_entry(symname, lts, "from", "to", pid, &regs, tsdx);
+	}
+
+	if (ret < 0) {
+		PRINT_ERROR("Encountered unexpected error handling function %s\n",
+			(is_return ? "exit" : "entry"));
 	}
 
 	if (ptrace(PTRACE_SINGLESTEP, pid, 0, 0) < 0) {
@@ -405,7 +544,7 @@ dump_wait_state(pid_t pid, int status, int force) {
 			exit(EXIT_FAILURE);
 		}
 
-		PRINT_ERROR("event new pid = %d\n", (int)msg);
+		PRINT_ERROR("Event generated by pid = %d\n", (int)msg);
 	}
 
 	// PTRACE_O_TRACESYSGOOD?
@@ -436,17 +575,6 @@ dump_intercepts(void) {
 }
 
 int set_intercept_redirect(pid_t pid, void *addr) {
-/*	ZydisDecoder decoder;
-	uint64_t ip = 0x007FFFFFFF400000;
-	uint8_t *iptr = (uint8_t *)&addr;
-	ZydisDecodedInstruction instruction;
-
-	ZydisDecoderInit( &decoder, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_ADDRESS_WIDTH_64);
-	
-	if (ZYDIS_SUCCESS(ZydisDecoderDecodeBuffer(&decoder, iptr, 16, ip, &instruction))) {
-		fprintf(stderr, "Decoded instruction length: %u bytes\n", instruction.length);
-	}
-*/
 	return 0;
 }
 
@@ -579,6 +707,9 @@ child_trace_program(const char *progname, char * const *args) {
 	printf("In child.\n");
 	raise(SIGSTOP);
 	printf("After raising.\n");
+//	setenv(GOTRACE_SOCKET_ENV, "/home/shw/gotrace/libgomod.so.0.1.1", 1);
+//	fprintf(stderr, "socket path: [%s]\n", gotrace_socket_path);
+	setenv(GOTRACE_SOCKET_ENV, gotrace_socket_path, 1);
 	execv(progname, args);
 	perror("execv");
 	exit(EXIT_FAILURE);
@@ -591,7 +722,6 @@ set_all_intercepts(pid_t pid) {
 	for (i = 0; i < sizeof(symbol_store)/sizeof(symbol_store[0]); i++) {
 		if (symbol_store[i].l) {
 
-//		#define MAXJ 	453
 		#define MAXJ	2000	
 //		printf("HEH: MAXJ = %s\n", symbol_store[i].map[MAXJ].name);
 			for (size_t j = 0; j < symbol_store[i].msize; j++) {
@@ -602,19 +732,8 @@ set_all_intercepts(pid_t pid) {
 					continue;
 				}
 
-				if (j > MAXJ) {
-
-				switch(symbol_store[i].map[j].addr) {
-				case (long)ADDR_SOMEFUNC:
-				case (long)ADDR_SOMEFUNC2:
-				case (long)ADDR_SOMEFUNC3:
-				case (long)ADDR_SOMEFUNC4:
-				case (long)ADDR_SOMEFUNC5:
-					break;
-				default:
+				if (j > MAXJ)
 					continue;
-				}
-	}
 
 				if (set_intercept(pid, (void *)symbol_store[i].map[j].addr) < 0) {
 					fprintf(stderr, "Error: could not set intercept on symbol: %s\n", symbol_store[i].map[j].name);
@@ -626,7 +745,7 @@ set_all_intercepts(pid_t pid) {
 
 	}
 
-	printf("Set intercepts.\n");
+	fprintf(stderr, "Set intercepts.\n");
 	return 0;
 }
 
@@ -691,6 +810,8 @@ trace_program(const char *progname, char * const *args) {
 
 	dump_intercepts();
 
+	start_listener();
+
 	printf("Running loop...\n");
 
 	if (ptrace(PTRACE_CONT, pid, NULL, 0) < 0) {
@@ -705,6 +826,24 @@ trace_program(const char *progname, char * const *args) {
 			perror("waitpid");
 			exit(EXIT_FAILURE);
 		}
+
+		if (WIFSTOPPED(wait_status) && (WSTOPSIG(wait_status) == SIGUSR2)) {
+			PRINT_ERROR("Traced PID/TID (%d) is our own code; detaching.\n", cpid);
+
+			if (ptrace(PTRACE_SETOPTIONS, cpid, NULL, 0) < 0) {
+				perror("ptrace(~PTRACE_SETOPTIONS)");
+				exit(EXIT_FAILURE);
+			}
+
+			if (ptrace(PTRACE_CONT, cpid, NULL, 0) < 0) {
+				perror("ptrace(PTRACE_CONT) [5]");
+				exit(EXIT_FAILURE);
+			}
+
+			continue;
+		}
+
+
 		dump_wait_state(cpid, wait_status, 0);
 
 		if (handle_trace_trap(cpid, wait_status, 0) < 1) {
@@ -714,7 +853,7 @@ trace_program(const char *progname, char * const *args) {
 //		if (WIFEXITED(wait_status) || (WIFSTOPPED(wait_status) && (WSTOPSIG(wait_status) != SIGTRAP))) {
 		if (WIFEXITED(wait_status)) {
 			fprintf(stderr, "Aborting loop.\n");
-			return 0;
+			break;
 		}
 
 		if (ptrace(PTRACE_CONT, cpid, NULL, 0) < 0) {
@@ -723,6 +862,9 @@ trace_program(const char *progname, char * const *args) {
 		}
 
 	}
+
+	fprintf(stderr, "Waiting 3 seconds...\n");
+	sleep(3);
 
 	return 0;
 }
@@ -761,6 +903,8 @@ main(int argc, char *argv[]) {
 		fprintf(stderr, "Error: could not read symbols from debug object\n");
 		exit(EXIT_FAILURE);
 	}
+
+	snprintf(gotrace_socket_path, sizeof(gotrace_socket_path), "/tmp/gotrace.sock.%d", getpid());
 
 	trace_program(progname, &argv[2]);
 	exit(-1);

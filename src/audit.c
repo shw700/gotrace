@@ -248,8 +248,7 @@ int sym_exit(const char *symname, void *ptr, char *lib_from, char *lib_to, pid_t
 	}
 
 	if (is_silent) {
-		if (lt_sh(&cfg, global_symbols))
-			sym = lt_symbol_get(cfg.sh, ptr, symname);
+		sym = lt_symbol_get(cfg.sh, ptr, symname);
 
 		if (sym && sym->args->args[LT_ARGS_RET]->latrace_custom_func_intercept) {
 			argret = lt_args_sym_exit(cfg.sh, sym, target, inregs, outregs, argbuf, LR_ARGS_MAXLEN, &argdbuf, is_silent, tsd);

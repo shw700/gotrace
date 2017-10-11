@@ -20,7 +20,7 @@
 GOTRACE_BIN=gotrace
 GOTRACE_LDFLAGS=$(LDFLAGS) -Wl,--no-as-needed -Wl,--export-dynamic
 #gcc -ggdb -O0 -Wall -D_GNU_SOURCE -Wl,--export-dynamic
-GOTRACE_LIBS=$(LIBS) $(LEXLIB) -ldl -lelf -lpthread ./zydis/build/libZydis.a
+GOTRACE_LIBS=$(LIBS) $(LEXLIB) -ldl -lelf -lpthread
 
 GOTRACE_OBJS=\
 	src/gtrace.o \
@@ -36,7 +36,7 @@ GOTRACE_OBJS=\
 	src/thread.o \
 	src/sysdeps/$(CONFIG_SYSDEP_DIR)/stack.o
 
-OBJS+=$(GOTRACE_OBJS)
+OBJS+=$(GOTRACE_OBJS) $(GOMOD_OBJS)
 PROGRAMS+= $(GOTRACE_BIN)
 # no dependency for flex and bison definitions
 OBJS_DEPS_OMIT+=\
@@ -46,6 +46,20 @@ OBJS_DEPS_OMIT+=\
 $(GOTRACE_BIN): $(GOTRACE_OBJS)
 	$(QUIET_LD)$(CC) $(CFLAGS) $(GOTRACE_LDFLAGS) -o $@ $^ $(GOTRACE_LIBS)
 
+
+# injected binary
+GOMOD_BIN=libgomod.so.$(CONFIG_VERSION)
+GOMOD_LDFLAGS="-Wl,-init=_gomod_init" -fPIC -shared $(LDFLAGS)
+GOMOD_LIB=-ldl -lpthread
+#./zydis/build/libZydis.a
+GOMOD_OBJS=\
+	src/gomod.o
+
+OBJS+=$(GOMOD_OBJS)
+PROGRAMS+=$(GOMOD_BIN)
+
+$(GOMOD_BIN): $(GOMOD_OBJS)
+	$(QUIET_LD)$(CC) $(CFLAGS) $(GOMOD_LDFLAGS) -o $@ $^ $(GOMOD_LIB)
 
 CPPFLAGS+=-I./zydis/include -I./zydis/build
 CPPFLAGS+=-DCONFIG_LIBDIR=\"$(libdir)\"

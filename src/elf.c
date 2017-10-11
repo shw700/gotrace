@@ -327,7 +327,7 @@ get_all_funcs_in_object(const char *filename) {
 	sheaders = (Elf64_Shdr *)(bindata + eheader->e_shoff);
 	for (i = 0; i < eheader->e_shnum; i++) {
 		if (sheaders[i].sh_type == SHT_SYMTAB) {
-			printf("Section header %zu: type %u, size %lu\n", i+1, sheaders[i].sh_type, sheaders[i].sh_size);
+//			printf("Section header %zu: type %u, size %lu\n", i+1, sheaders[i].sh_type, sheaders[i].sh_size);
 			symtab = (void *)(bindata + sheaders[i].sh_offset);
 
 			if (sheaders[i].sh_entsize != sizeof(Elf64_Sym)) {
@@ -336,7 +336,7 @@ get_all_funcs_in_object(const char *filename) {
 			}
 
 		} else if (sheaders[i].sh_type == SHT_STRTAB) {
-			printf("Section header %zu: type %u, size %lu\n", i+1, sheaders[i].sh_type, sheaders[i].sh_size);
+//			printf("Section header %zu: type %u, size %lu\n", i+1, sheaders[i].sh_type, sheaders[i].sh_size);
 			// XXX: this is very wrong
 			if (sheaders[i].sh_size > strtab_size) {
 				strtab = (void *)(bindata + sheaders[i].sh_offset);

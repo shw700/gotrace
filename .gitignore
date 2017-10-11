@@ -1,5 +1,6 @@
 *.o
 *.so
+libgomod.so.*
 *.output
 *.swp
 test-*
