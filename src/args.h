@@ -94,6 +94,7 @@ struct lt_arg {
 	int   type_id;
 	u_int type_len;
 	char  *type_name;
+	char  *real_type_name;
 
 	/* argument value properties */
 	int pointer;

@@ -48,6 +48,8 @@ func runtime.persistentalloc1(size uintptr, align uintptr, sysStat *uint64) unsa
 func runtime.nextSample() int32
 
 func runtime.heapBits.initSpan(s *mspan)
+//func heapBitsSetType(x, size, dataSize uintptr, typ *_type)
+func runtime.heapBitsSetType(x uintptr, size uintptr, dataSize uintptr, typ *_type)
 func progToPointerMask(prog *byte, size uintptr) bitvector
 //func runGCProg(prog, trailer, dst *byte, size int) uintptr
 func runtime.runGCProg(prog *byte, trailer *byte, dst *byte, size int) uintptr
@@ -150,3 +152,16 @@ func runtime.mput(mp *m)
 func runtime.releasep() p
 //func pidleput(_p_ *p
 func runtime.pidleput(_p_ *p)
+func runtime.readgstatus(gp *g) uint32
+func runtime.execute(gp *g, inheritTime bool)
+
+// Slices
+//func makeslice(et *_type, len, cap int) slice
+func runtime.makeslice(et *_type, len int, cap int) slice
+
+// Strings
+func strings.IndexByte(s string, c byte)
+
+// Network
+func runtime.netpollinited() bool
+func net.selfConnect(fd *netFD, err error) bool

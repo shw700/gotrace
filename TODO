@@ -1,2 +1,4 @@
 * fix parsing of primitives < 64 bits wide on stack
 remove transformer call stacks
+support lookups on itabs
+* eliminate static lookup of types (i.e. "net.TCPConn")

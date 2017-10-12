@@ -132,6 +132,7 @@ static int test_fd = -1;
 void *
 call_remote_func(pid_t pid, unsigned char reqtype, void *data, size_t dsize, size_t *psize)
 {
+	void *result;
 	gomod_data_hdr_t hdr;
 	int res;
 
@@ -169,7 +170,7 @@ call_remote_func(pid_t pid, unsigned char reqtype, void *data, size_t dsize, siz
 		if (res == -1)
 			perror("recv");
 
-		PRINT_ERROR("%s", "Error encountered in retrieving remote result of gomod function.\n");
+		PRINT_ERROR("%s", "Error encountered in retrieving remote result header of gomod function.\n");
 		return NULL;
 	}
 
@@ -183,7 +184,38 @@ call_remote_func(pid_t pid, unsigned char reqtype, void *data, size_t dsize, siz
 
 	PRINT_ERROR("GO MOD RETURN SIZE = %u bytes\n", hdr.size);
 
-	return NULL;
+	if (!(result = malloc(hdr.size))) {
+		perror("malloc");
+		return NULL;
+	}
+
+	if ((res = recv(fd, result, hdr.size, MSG_WAITALL)) != hdr.size) {
+		if (res == -1)
+			perror("recv");
+
+		PRINT_ERROR("%s", "Error encountered in retrieving remote result body of gomod function.\n");
+		free(result);
+		return NULL;
+	}
+
+	return result;
+}
+
+char *
+call_remote_serializer(const char *name, void *addr) {
+	void *result;
+	unsigned long *upval;
+	char reqbuf[128];
+	size_t reqsize, outsize;
+
+	memset(reqbuf, 0, sizeof(reqbuf));
+	strncpy(reqbuf, name, sizeof(reqbuf)-(1+sizeof(void *)));
+	upval = (unsigned long *)(reqbuf + strlen(reqbuf) + 1);
+	*upval = (unsigned long)addr;
+	reqsize = ((char *)upval) + sizeof(void *) - ((char *)reqbuf);
+	result = call_remote_func(-1, GOMOD_RT_SERIALIZE_DATA, reqbuf, reqsize, &outsize);
+
+	return result;
 }
 
 void *
@@ -207,11 +239,6 @@ gotrace_socket_loop(void *param) {
 
 		fprintf(stderr, "ACCEPTED!\n");
 		test_fd = cfd;
-
-	void *heh;
-	#define XDATA "123456781234567812345678\x00"
-	heh = call_remote_func(-1, GOMOD_RT_SET_INTERCEPT, XDATA, strlen(XDATA), NULL);
-	fprintf(stderr, "call result = %p\n", heh);
 
 		fprintf(stderr, "Sleeping...\n");
 		sleep(2);

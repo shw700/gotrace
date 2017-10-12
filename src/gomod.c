@@ -26,6 +26,7 @@ int map_stub(void);
 
 char *call_golang_func_by_name(const char *fname, void *param);
 char *call_golang_func_str(void *func, void *param);
+char *call_data_serializer(const char *dtype, void *addr);
 
 
 int
@@ -185,6 +186,28 @@ map_stub(void) {
 	return 0;
 }
 
+char *
+call_data_serializer(const char *dtype, void *addr) {
+	unsigned long uaddr = (unsigned long)addr;
+	char resbuf[1024];
+	char *result;
+
+	memset(resbuf, 0, sizeof(resbuf));
+	snprintf(resbuf, sizeof(resbuf), "XXX: %s() / %p", dtype, addr);
+
+	if (!strcmp(dtype, "net.TCPConn")) {
+		char *dstr;
+
+		dstr = gotrace_print_net__TCPConn(uaddr);
+		strncpy(resbuf, dstr, sizeof(resbuf));
+	}
+
+
+	result = strdup(resbuf);
+
+	return result;
+}
+
 
 int set_intercept_redirect(pid_t pid, void *addr) {
 /*	ZydisDecoder decoder;
@@ -232,7 +255,7 @@ client_socket_loop(void *arg) {
 		if (hdr.magic != GOMOD_DATA_MAGIC) {
 			fprintf(stderr, "Error retrieving gomod function request with unexpected data formatting.\n");
 			break;
-		} else if ((hdr.reqtype != GOMOD_RT_SET_INTERCEPT) && (hdr.reqtype != GOMOD_RT_CALL_FUNC)) {
+		} else if ((hdr.reqtype != GOMOD_RT_SET_INTERCEPT) && (hdr.reqtype != GOMOD_RT_SERIALIZE_DATA)) {
 			fprintf(stderr, "Error retrieving gomod function request with unrecognized type.\n");
 			break;
 		}
@@ -253,6 +276,8 @@ client_socket_loop(void *arg) {
 			break;
 		}
 
+	fprintf(stderr, "Loop: read all data\n");
+
 		if (hdr.reqtype == GOMOD_RT_SET_INTERCEPT) {
 			if (hdr.size % sizeof(void *)) {
 				fprintf(stderr, "Error: Received set intercept request with invalid size (%u bytes).\n", hdr.size);
@@ -261,15 +286,46 @@ client_socket_loop(void *arg) {
 			}
 
 			fprintf(stderr, "Loop received set intercept request (n=%u).\n", (unsigned int)(hdr.size / sizeof(void *)));
-		} else if (hdr.reqtype == GOMOD_RT_CALL_FUNC) {
-			void *fdata;
-			char *fname = (char *)dbuf;
+		} else if (hdr.reqtype == GOMOD_RT_SERIALIZE_DATA) {
+			unsigned long *fdata;
+			char *sdata, *fname = (char *)dbuf;
 
-			fdata = (void *)(fname + strlen(fdata) + 1);
-			fprintf(stderr, "Loop received function call request: %s()\n", fname);
+			fdata = (unsigned long *)(fname + strlen(fname) + 1);
+//			fprintf(stderr, "Loop received function call request: %s() / %p\n",
+//				fname, (void *)*fdata);
+			if (!(sdata = call_data_serializer(fname, (void *)*fdata))) {
+				fprintf(stderr, "Loop encountered unexpected error serializing function data.\n");
+				free(dbuf);
+				break;
+			} else {
+//				fprintf(stderr, "Loop serialized struct data: [%s]\n", sdata);
+				hdr.size = strlen(sdata) + 1;
+				free(dbuf);
+
+				if ((res = send(fd, &hdr, sizeof(hdr), 0) != sizeof(hdr))) {
+					if (res == -1)
+						perror("send");
+
+					fprintf(stderr, "Unexpected error sending back response header data on gotrace control socket.\n");
+					free(sdata);
+					break;
+				}
+
+				if ((res = send(fd, sdata, hdr.size, 0) != hdr.size)) {
+					if (res == -1)
+						perror("send");
+
+					fprintf(stderr, "Unexpected error sending back response body data on gotrace control socket.\n");
+					free(sdata);
+					break;
+				}
+
+
+				free(sdata);
+			}
+
 		}
 
-		free(dbuf);
         }
 
 

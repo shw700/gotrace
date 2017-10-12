@@ -2,17 +2,27 @@ package main
 
 
 import "fmt"
-//import "net"
+import "net"
 import "time"
-//import "github.com/cookieo9/goffi/dlopen"
+import "os"
+import "github.com/cookieo9/goffi/dlopen"
+
 
 const LIBPATH = "/home/shw/gotrace/libgomod.so.0.1.1"
 
 
 func import_lib() {
 	fmt.Println("HI!!!")
-//	handle, err := dlopen.Open(LIBPATH, dlopen.NOW)
-//	fmt.Printf("err = %v / handle = %v\n", err, handle)
+	curdir, _ := os.Getwd()
+	fmt.Println("AAA: ", os.Setenv("LD_LIBRARY_PATH", curdir))
+	handle, err := dlopen.Open(LIBPATH, dlopen.NOW)
+	fmt.Printf("AAA: err = %v / handle = %v\n", err, handle)
+
+	if err != nil {
+		fmt.Println("Error loading shared libary: ", err)
+		os.Exit(-1)
+	}
+
 	return
 }
 
@@ -64,10 +74,32 @@ func Somefunc12(hi int16) (string, string) {
 func Somefunc8(c net.Conn) {
 	fmt.Println("CONN: ", c)
 } */
+func TouchConnection(c *net.TCPConn) {
+	fmt.Println("We got a connection!")
+}
+
+func GetConnection() *net.TCPConn {
+	servAddr := "www.google.com:443"
+	tcpAddr, err := net.ResolveTCPAddr("tcp", servAddr)
+	if err != nil {
+		return nil
+	}
+
+	conn, err := net.DialTCP("tcp", nil, tcpAddr)
+	if err != nil {
+		return nil
+	}
+
+	return conn
+}
+
 
 func main() {
 	fmt.Println("GO TEST GO TEST")
-	import_lib()
+//	import_lib()
+	conn := GetConnection()
+	TouchConnection(conn)
+	fmt.Println("conn = ", conn)
 	Somefunc(0x41424344)
 	Somefunc2(0x11223344, 0x66778899)
 	var ok int = 1

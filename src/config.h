@@ -277,11 +277,9 @@ struct lt_symbol* lt_symbol_bind(struct lt_config_shared *cfg,
 struct lt_symbol* lt_symbol_get(struct lt_config_shared *cfg,
 				void *ptr, const char *name);
 
-/* config options */
-struct lt_config_opt *lt_config_opt_new(struct lt_config_app *cfg,
-					int idx, char *sval, long nval);
-int lt_config_ln_add(struct lt_list_head *head, char *name);
-int lt_config_ln_fill(struct lt_list_head *head, char *buf, int size);
+/* tracer */
+char *call_remote_serializer(const char *name, void *addr);
+
 
 #define PRINT(fmt, args...) \
 do { \
@@ -394,6 +392,7 @@ do { \
 #define GOMOD_DATA_MAGIC	0x93
 #define GOMOD_RT_SET_INTERCEPT	1
 #define GOMOD_RT_CALL_FUNC	2
+#define GOMOD_RT_SERIALIZE_DATA	3
 typedef struct __attribute__((packed)) gomod_data_hdr {
 	uint8_t magic;
 	uint16_t size;

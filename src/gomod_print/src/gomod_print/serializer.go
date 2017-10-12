@@ -15,6 +15,7 @@ func gotrace_print_net__TCPConn(c uintptr) *C.char {
 	desc := "TCPConn(nil)"
 
 	if cc != nil {
+//	        desc = fmt.Sprintf("[TCPConn] %v <-> %v", cc.LocalAddr().String(), cc.RemoteAddr().String())
 	        desc = fmt.Sprintf("[TCPConn] %v <-> %v", cc.LocalAddr(), cc.RemoteAddr())
 	}
 
