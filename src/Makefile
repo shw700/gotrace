@@ -65,7 +65,7 @@ GO=go
 
 $(GOMOD_BIN): $(GOMOD_OBJS)
 	GOPATH=`pwd`/src/gomod_print $(GO) build -buildmode=c-shared -o gomod_printlib.a gomod_print
-	$(QUIET_LD)$(GCCGO) $(CFLAGS) $(GOMOD_LDFLAGS) -o $@ $^ $(GOMOD_LIB)
+	$(QUIET_LD)$(CC) $(CFLAGS) $(GOMOD_LDFLAGS) -o $@ $^ $(GOMOD_LIB)
 
 CPPFLAGS+=-I./zydis/include -I./zydis/build
 CPPFLAGS+=-DCONFIG_LIBDIR=\"$(libdir)\"
