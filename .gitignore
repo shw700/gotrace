@@ -22,3 +22,5 @@ gotrace
 autom4te.cache/
 backup/
 test/
+gomod_printlib.a
+gomod_printlib.h

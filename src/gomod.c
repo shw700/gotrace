@@ -6,16 +6,184 @@
 #include <sys/un.h>
 #include <dlfcn.h>
 #include <pthread.h>
+#include <sys/prctl.h>
+#include <asm/prctl.h>
+#include <setjmp.h>
 
 #include "config.h"
+
+#include "gomod_print/gomod_print.h"
 
 //#include "zydis/include/Zydis/Decoder.h
 
 
+extern void *___dlopen_stub;
 int _gotrace_socket_fd = -1;
 
 void *client_socket_loop(void *arg);
 int set_intercept_redirect(pid_t pid, void *addr);
+int map_stub(void);
+
+char *call_golang_func_by_name(const char *fname, void *param);
+char *call_golang_func_str(void *func, void *param);
+
+
+int
+call_mallocinit() {
+	static jmp_buf j;
+
+	void (*minitptr)(void);
+
+	if (setjmp(j)) {
+		fprintf(stderr, "Forcing return.\n");
+		return 0;
+	}
+
+//	fprintf(stderr, "IN MALLOCINIT\n");
+	minitptr = (void *)0x000000000040fb00;
+	minitptr();
+//	fprintf(stderr, "AFTER MALLOCINIT\n");
+	longjmp(j, 1);
+
+	return 0;
+}
+char *
+call_golang_func_by_name(const char *fname, void *param)
+{
+	void *faddr;
+
+	if (!(faddr = dlsym(RTLD_DEFAULT, fname))) {
+		fprintf(stderr, "Error calling golang function \"%s\": %s\n", fname, dlerror());
+		return NULL;
+	}
+
+	return call_golang_func_str(faddr, param);
+}
+
+#define arch_prctl(code,addr)	syscall(SYS_arch_prctl, code, addr)
+
+char *
+call_golang_func_str(void *func, void *param) {
+	static char fs_buf[512];
+	static char fs_buf_helper[512];
+	static char fs_buf_helper2[512];
+	static char fs_buf_helper3[512];
+	unsigned long saved_fs;
+	char *ret = NULL;
+	int once = 1;
+
+//	fprintf(stderr, "calling mallocinit() first\n");
+	call_mallocinit();
+//	fprintf(stderr, "returned from mallocinit\n");
+
+	if (once) {
+		unsigned long *pword = (unsigned long *)fs_buf;
+		size_t i;
+
+		memset(fs_buf, 0, sizeof(fs_buf));
+		memset(fs_buf_helper, 0, sizeof(fs_buf_helper));
+		memset(fs_buf_helper2, 0, sizeof(fs_buf_helper2));
+		memset(fs_buf_helper3, 0, sizeof(fs_buf_helper3));
+
+		for (i = 0; i < sizeof(fs_buf)/sizeof(void *); i++) {
+//			*pword++ = (unsigned long)0x78bce0;
+//			*pword++ = (unsigned long)&fs_buf_helper;
+		if (i == 15)
+			*pword++ = (unsigned long)&fs_buf_helper;
+		else
+			*pword++ = (unsigned long)0xc0ffee000+i;
+		}
+
+
+		pword = (unsigned long *)fs_buf_helper;
+
+		for (i = 0; i < sizeof(fs_buf_helper)/sizeof(void *); i++) {
+		if (!i)
+			*pword++ = (unsigned long)fs_buf;
+//			*pword++ = (unsigned long)0x00007fffff7fec20;
+		else if ((i >= 6) && (i <= 9))
+			*pword++ = (unsigned long)0x000000000078c020;
+		else
+			*pword++ = (unsigned long)0xdeadb000+i;
+		}
+//			*pword++ = (unsigned long)&fs_buf_helper2;
+
+		pword = (unsigned long *)fs_buf_helper2;
+		for (i = 0; i < sizeof(fs_buf_helper2)/sizeof(void *); i++)
+			*pword++ = (unsigned long)&fs_buf_helper3;
+
+		fs_buf_helper2[187] = 0x37;
+		fs_buf_helper2[188] = 0x0;
+		fs_buf_helper2[189] = 0x0;
+		fs_buf_helper2[190] = 0x0;
+		fs_buf_helper2[191] = 0x0;
+		fs_buf_helper2[192] = 0x0;
+	}
+
+	if (arch_prctl(ARCH_GET_FS, &saved_fs) == -1) {
+		perror("arch_prctl(ARCH_GET_FS)");
+		return NULL;
+	}
+
+	fprintf(stderr, "saved fs: %p; new: %p\n", (void *)saved_fs, (void *)fs_buf+256);
+	fprintf(stderr, "Bufs: %p, 1=%p, 2=%p, 3=%p\n", fs_buf, fs_buf_helper, fs_buf_helper2, fs_buf_helper3);
+	fprintf(stderr, "Calling: %p / %p\n", func, param);
+
+	if (arch_prctl(ARCH_SET_FS, fs_buf+128) == -1) {
+		perror("arch_prctl(ARCH_SET_FS)");
+		return NULL;
+	}
+
+
+	asm (	"push %%rdx;		\
+		call *%%rbx;		\
+		mov 8(%%rsp), %%rbx;	\
+		nop;"
+		: "=b" (ret)
+		: "b" (func), "d" (param)
+	);
+
+	if (arch_prctl(ARCH_SET_FS, saved_fs) == -1) {
+		perror("arch_prctl(ARCH_SET_FS)");
+		return NULL;
+	}
+
+	return ret;
+}
+
+int
+map_stub(void) {
+	unsigned char *jmpptr, *buf;
+	uint32_t search = 0xdeadbeef;
+
+	if ((buf = mmap(NULL, 4096, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_ANONYMOUS|MAP_PRIVATE, 0, 0)) == MAP_FAILED) {
+		perror("mmap");
+		return -1;
+	}
+
+	memset(buf, 0x90, 128);
+	memcpy(buf, ___dlopen_stub, 80);
+
+	jmpptr = buf;
+
+	while (jmpptr < (buf+128)) {
+		if (!memcmp(jmpptr, &search, sizeof(search)))
+			break;
+
+		jmpptr++;
+	}
+
+	if (jmpptr >= (buf+128)) {
+		fprintf(stderr, "Error: search failed!\n");
+		return -1;
+	}
+
+	//*((unsigned long *)jmpptr) = 0x4007b0;
+        //somefunc = (void *)buf;
+	//somefunc();
+
+	return 0;
+}
 
 
 int set_intercept_redirect(pid_t pid, void *addr) {
@@ -38,7 +206,7 @@ static int client_loop_initialized = 0;
 void *
 client_socket_loop(void *arg) {
 	int fd = (int)((uintptr_t)arg);
-	
+
 	client_loop_initialized = 1;
 
 	fprintf(stderr, "Loop reading (%u).\n", (unsigned int)syscall(SYS_gettid));
@@ -93,9 +261,14 @@ client_socket_loop(void *arg) {
 			}
 
 			fprintf(stderr, "Loop received set intercept request (n=%u).\n", (unsigned int)(hdr.size / sizeof(void *)));
+		} else if (hdr.reqtype == GOMOD_RT_CALL_FUNC) {
+			void *fdata;
+			char *fname = (char *)dbuf;
+
+			fdata = (void *)(fname + strlen(fdata) + 1);
+			fprintf(stderr, "Loop received function call request: %s()\n", fname);
 		}
 
-		fprintf(stderr, "Loop read all data ok\n");
 		free(dbuf);
         }
 
@@ -113,6 +286,13 @@ void _gomod_init(void)
 	socklen_t ssize;
 	char *gotrace_socket_path = NULL;
 	int fd;
+
+//	char *tcptest = gotrace_print_net__TCPConn(0);
+//	printf("tcptest = [%s]\n", tcptest);
+
+	fprintf(stderr, "Loop (%lu)\n", syscall(SYS_gettid));
+//	char *rx = call_golang_func_str((void *)0x000000000402100, (void *)0xc0debabe);
+//	fprintf(stderr, "Loop result heh = %p\n", rx);
 
 	if (!(gotrace_socket_path = getenv(GOTRACE_SOCKET_ENV))) {
 		fprintf(stderr, "Error: could not find gotrace socket path in environment!\n");

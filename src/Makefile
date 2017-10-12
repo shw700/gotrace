@@ -41,7 +41,8 @@ PROGRAMS+= $(GOTRACE_BIN)
 # no dependency for flex and bison definitions
 OBJS_DEPS_OMIT+=\
 	src/args-flex.o \
-	src/args-bison.o
+	src/args-bison.o \
+	src/dlopen_stub.o
 
 $(GOTRACE_BIN): $(GOTRACE_OBJS)
 	$(QUIET_LD)$(CC) $(CFLAGS) $(GOTRACE_LDFLAGS) -o $@ $^ $(GOTRACE_LIBS)
@@ -50,16 +51,21 @@ $(GOTRACE_BIN): $(GOTRACE_OBJS)
 # injected binary
 GOMOD_BIN=libgomod.so.$(CONFIG_VERSION)
 GOMOD_LDFLAGS="-Wl,-init=_gomod_init" -fPIC -shared $(LDFLAGS)
-GOMOD_LIB=-ldl -lpthread
+GOMOD_LIB=-ldl -lpthread gomod_printlib.a
 #./zydis/build/libZydis.a
 GOMOD_OBJS=\
-	src/gomod.o
+	src/gomod.o \
+	src/dlopen_stub.o
 
 OBJS+=$(GOMOD_OBJS)
 PROGRAMS+=$(GOMOD_BIN)
 
+GCCGO=gccgo
+GO=go
+
 $(GOMOD_BIN): $(GOMOD_OBJS)
-	$(QUIET_LD)$(CC) $(CFLAGS) $(GOMOD_LDFLAGS) -o $@ $^ $(GOMOD_LIB)
+	GOPATH=`pwd`/src/gomod_print $(GO) build -buildmode=c-shared -o gomod_printlib.a gomod_print
+	$(QUIET_LD)$(GCCGO) $(CFLAGS) $(GOMOD_LDFLAGS) -o $@ $^ $(GOMOD_LIB)
 
 CPPFLAGS+=-I./zydis/include -I./zydis/build
 CPPFLAGS+=-DCONFIG_LIBDIR=\"$(libdir)\"

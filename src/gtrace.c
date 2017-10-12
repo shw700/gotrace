@@ -869,6 +869,25 @@ trace_program(const char *progname, char * const *args) {
 
 		if (handle_trace_trap(cpid, wait_status, 0) < 1) {
 			fprintf(stderr, "Error: something bad happened while handling trace trap\n");
+
+			if (WIFSTOPPED(wait_status) && (WSTOPSIG(wait_status) == SIGSEGV)) {
+				struct user_regs_struct regs;
+				siginfo_t si;
+				static int scnt = 0;
+
+				if (ptrace(PTRACE_GETSIGINFO, cpid, 0, &si) < 0)
+					perror("ptrace(PTRACE_GETSIGINFO)");
+				else if (ptrace(PTRACE_GETREGS, cpid, 0, &regs) < 0) {
+					perror("ptrace(PTRACE_GETREGS)");
+					fprintf(stderr, "SIGSEGV occurred at address: %p\n", si.si_addr);
+				} else {
+					fprintf(stderr, "SIGSEGV occurred at address %p / PC %p\n",
+						si.si_addr, (void *)regs.rip);
+				}
+
+				if (scnt++ > 5)
+					exit(-1);
+			}
 		}
 
 //		if (WIFEXITED(wait_status) || (WIFSTOPPED(wait_status) && (WSTOPSIG(wait_status) != SIGTRAP))) {
