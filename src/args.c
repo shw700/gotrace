@@ -33,6 +33,8 @@
 #include "lib-include.h"
 #include "elfh.h"
 
+#include "gomod_print/gomod_print.h"
+
 #define LT_EQUAL           " = "
 
 extern int errno;
@@ -1675,7 +1677,7 @@ int lt_args_cb_arg(struct lt_config_shared *cfg, struct lt_arg *arg, void *pval,
 {
 	int len = data->arglen;
 
-	if (arg->real_type_name && (!strcmp(arg->real_type_name, "net.TCPConn"))) {
+	if (arg->real_type_name && is_type_serialization_supported(arg->real_type_name)) {
 		char *sres;
 
 		if ((sres = call_remote_serializer(-1, arg->real_type_name, pval))) {

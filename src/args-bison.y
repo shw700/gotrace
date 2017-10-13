@@ -82,6 +82,7 @@ do { \
 }
 
 %type <s>         NAME
+%type <s>         VAR_NAME
 %type <s>         POINTER
 %type <s>         FILENAME
 %type <s>         NEWLINE
@@ -232,7 +233,7 @@ EMPTY_COMMA:
 
 /* function definitions */
 func_def:
-XDEF '(' ARGS ')' '(' NAME ',' NAME ')'
+XDEF '(' ARGS ')' '(' VAR_NAME ',' VAR_NAME ')'
 {
 	struct lt_arg **mret;
 	struct lt_arg *farg = $1, *arg, *arg2;
@@ -296,7 +297,7 @@ XDEF '(' ARGS ')' '(' NAME ',' NAME ')'
 	$3 = NULL;
 }
 |
-XDEF '(' ARGS ')' NAME
+XDEF '(' ARGS ')' VAR_NAME
 {
 	struct lt_arg *farg = $1, *arg;
 
@@ -576,6 +577,17 @@ NAME '=' NAME NAME
 		ERROR("unknown argument type[9] - %s; possibly due to enum specification of \"%s\"\n", $1, $3);
 
 	$$ = arg;
+}
+
+VAR_NAME:
+NAME
+{
+	$$ = $1;
+}
+|
+POINTER NAME
+{
+	$$ = $2;
 }
 
 %%

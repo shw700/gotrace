@@ -44,7 +44,8 @@ PROGRAMS+= $(GOTRACE_BIN)
 OBJS_DEPS_OMIT+=\
 	src/args-flex.o \
 	src/args-bison.o \
-	src/dlopen_stub.o
+	src/dlopen_stub.o \
+	src/serializer_mod.o
 
 $(GOTRACE_BIN): $(GOTRACE_OBJS)
 	$(QUIET_LD)$(CC) $(CFLAGS) $(GOTRACE_LDFLAGS) -o $@ $^ $(GOTRACE_LIBS)
@@ -56,7 +57,8 @@ GOMOD_LDFLAGS="-Wl,-init=_gomod_init" -fPIC -shared $(LDFLAGS)
 GOMOD_LIB=-ldl -lpthread gomod_printlib.a $(ZYDIS_LIB)
 GOMOD_OBJS=\
 	src/gomod.o \
-	src/dlopen_stub.o
+	src/dlopen_stub.o \
+	src/serializer_mod.o
 
 OBJS+=$(GOMOD_OBJS)
 PROGRAMS+=$(GOMOD_BIN)

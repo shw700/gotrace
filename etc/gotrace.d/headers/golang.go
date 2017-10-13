@@ -63,7 +63,7 @@ func runtime.setsig(i uint32, fn uintptr/p)
 func runtime.gogetenv(key string) string
 func runtime.GOROOT() string
 
-int runtime.strequal(unsafe.Pointer p, unsafe.Pointer q)
+func runtime.strequal(unsafe.Pointer p, unsafe.Pointer q) int
 
 func runtime.atomicstorep(ptr unsafe.Pointer, new unsafe.Pointer)
 
@@ -80,8 +80,7 @@ func runtime.mmap_fixed(v unsafe.Pointer, n uintptr, prot/om int32=mmap_prot, fl
 
 // channels
 func runtime.closechan(c *hchan)
-//func makechan(t *chantype, size int) *hchan
-func runtime.makechan(t *chantype, size int) hchan
+func runtime.makechan(t *chantype, size int) *hchan
 //func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
 func runtime.chanrecv(c *hchan, ep unsafe.Pointer, block bool) bool
 func runtime.chanrecv1(c *hchan, elem unsafe.Pointer)
@@ -136,8 +135,7 @@ func net.SplitHostPort(hostport string) (string, string)
 //func xtoi(s string) (n int, i int, ok bool)
 func net.xtoi(s string) (int, int)
 func net.last(s string, b byte) int
-//func ResolveTCPAddr(network, address string) (*TCPAddr, error
-func net.ResolveTCPAddr(network string, address string) (net.TCPAddr, error)
+func net.ResolveTCPAddr(network string, address string) (*net.TCPAddr, error)
 //func net.ipToSockaddr(family int, ip IP, port int, zone string) (syscall.Sockaddr, error)
 
 func runtime/internal/atomic.Load(ptr *uint32) uint32
@@ -168,9 +166,7 @@ func runtime.systemstack(func pfn)
 func runtime.checkdead()
 func runtime.schedule()
 func runtime.mput(mp *m)
-//func releasep() *p
-func runtime.releasep() p
-//func pidleput(_p_ *p
+func runtime.releasep() *p
 func runtime.pidleput(_p_ *p)
 func runtime.readgstatus(gp *g) uint32
 func runtime.execute(gp *g, inheritTime bool)

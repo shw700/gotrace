@@ -198,6 +198,7 @@ map_stub(void) {
 
 char *
 call_data_serializer(const char *dtype, void *addr) {
+	golang_serializer_func sfunc;
 	unsigned long uaddr = (unsigned long)addr;
 	char resbuf[1024];
 	char *result;
@@ -205,13 +206,13 @@ call_data_serializer(const char *dtype, void *addr) {
 	memset(resbuf, 0, sizeof(resbuf));
 	snprintf(resbuf, sizeof(resbuf), "XXX: %s() / %p", dtype, addr);
 
-	if (!strcmp(dtype, "net.TCPConn")) {
+	if ((sfunc = get_golang_serializer(dtype))) {
 		char *dstr;
 
-		dstr = gotrace_print_net__TCPConn(uaddr);
+		dstr = sfunc(uaddr);
 		strncpy(resbuf, dstr, sizeof(resbuf));
-	}
-
+	} else
+		fprintf(stderr, "Warning: serialization request on unsupported type: %s\n", dtype);
 
 	result = strdup(resbuf);
 
@@ -490,9 +491,6 @@ void _gomod_init(void)
 	socklen_t ssize;
 	char *gotrace_socket_path = NULL;
 	int fd;
-
-//	char *tcptest = gotrace_print_net__TCPConn(0);
-//	printf("tcptest = [%s]\n", tcptest);
 
 	fprintf(stderr, "Loop (%lu)\n", syscall(SYS_gettid));
 //	char *rx = call_golang_func_str((void *)0x000000000402100, (void *)0xc0debabe);

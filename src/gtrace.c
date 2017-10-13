@@ -71,13 +71,14 @@ char gotrace_socket_path[128];
 
 char *excluded_intercepts[] = {
 //	"runtime.(*mcache).refill",
-	"main.GetConnection"
+	"main.GetConnection",
+//	"main.TouchConnection"
 };
 
 extern char *read_string_remote(pid_t pid, char *addr, size_t slen);
 
 void *call_remote_func(pid_t pid, unsigned char reqtype, void *data, size_t dsize, size_t *psize);
-int call_remote_intercept(pid_t pid, char **funcnames, unsigned long *addresses, size_t naddr);
+int call_remote_intercept(pid_t pid, char **funcnames, unsigned long *addresses, size_t naddr, int is_entry);
 
 void start_listener(void);
 void *gotrace_socket_loop(void *param);
@@ -222,7 +223,7 @@ call_remote_serializer(pid_t pid, const char *name, void *addr) {
 }
 
 int
-call_remote_intercept(pid_t pid, char **funcnames, unsigned long *addresses, size_t naddr) {
+call_remote_intercept(pid_t pid, char **funcnames, unsigned long *addresses, size_t naddr, int is_entry) {
 	void *result;
 	unsigned long *taddr;
 	size_t outsize;
@@ -235,7 +236,7 @@ call_remote_intercept(pid_t pid, char **funcnames, unsigned long *addresses, siz
 	else {
 		fprintf(stderr, "XXX: call remote intercept: result = %p / %zu: %p\n", result, outsize, (void *)*taddr);
 
-		if (save_remote_intercept(pid, *funcnames, (void *)*taddr, 1) < 0) {
+		if (save_remote_intercept(pid, *funcnames, (void *)*taddr, is_entry) < 0) {
 			fprintf(stderr, "Unknown error occurred setting remote function intercept\n");
 		}
 	}
@@ -267,8 +268,15 @@ gotrace_socket_loop(void *param) {
 
 /*		char *fname = "main.GetConnection";
 		unsigned long readdr = 0x0000000000402d60;
-		int res = call_remote_intercept(-1, &fname, &readdr, 1);
+		int res = call_remote_intercept(-1, &fname, &readdr, 1, 1);
+		fprintf(stderr, "XXX: int res = %d\n", res);
+
+		fname = "main.TouchConnection";
+		readdr = 0x0000000000402c60;*/
+/*		res = call_remote_intercept(-1, &fname, &readdr, 1, 1);
 		fprintf(stderr, "XXX: int res = %d\n", res);*/
+
+
 
 
 		fprintf(stderr, "XXX: Sleeping...\n");
@@ -380,14 +388,30 @@ check_remote_intercept(pid_t pid, void *pc, struct user_regs_struct *regs) {
 			int ret;
 
 			symname = remote_intercepts[i].fname;
-			fprintf(stderr, "XXX: OOOOOOOOOOOOH YEAH: %s\n", symname);
+			fprintf(stderr, "XXX: OOOOOOOOOOOOH YEAH: %s / %d\n", symname, remote_intercepts[i].is_entry);
+
+			if (remote_intercepts[i].is_entry) {
+				unsigned long retaddr;
+
+				errno = 0;
+				retaddr = ptrace(PTRACE_PEEKTEXT, pid, regs->rsp+sizeof(void *), 0);
+				if (errno != 0) {
+					perror_pid("ptrace(PTRACE_PEEKTEXT)", pid);
+					return -1;
+				}
+
+				fprintf(stderr, "XXX: YUPP %p\n", (void *)retaddr);
+				int res = call_remote_intercept(pid, &symname, &retaddr, 1, 0);
+				fprintf(stderr, "XXX: res = %d\n", res);
+			}
+
 			lts = lt_symbol_bind(cfg.sh, pc, symname);
 			lt_tsd_t *tsdx = thread_get_tsd(pid, 1);
 
-			if (!remote_intercepts[i].is_entry)
-				ret = sym_exit(symname, lts, "from", "to", pid, regs, regs, tsdx);
-			else
+			if (remote_intercepts[i].is_entry)
 				ret = sym_entry(symname, lts, "from", "to", pid, regs, tsdx);
+			else
+				ret = sym_exit(symname, lts, "from", "to", pid, regs, regs, tsdx);
 
 			return 0;
 		}

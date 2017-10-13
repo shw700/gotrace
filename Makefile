@@ -119,6 +119,9 @@ ALL_CFLAGS+=-D_GNU_SOURCE -imacros src/autoconf.h
 src/dlopen_stub.o: src/dlopen_stub.S
 	$(QUIET_CC)$(CC) -o $*.o -c $(ALL_CFLAGS) $<
 
+src/serializer_mod.o: src/serializer.c
+	$(QUIET_CC)$(CC) -o $*.o -c $(ALL_CFLAGS) -DMODULE=1 $<
+
 
 .SECONDARY:
 
