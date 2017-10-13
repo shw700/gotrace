@@ -251,7 +251,6 @@ gotrace_socket_loop(void *param) {
 		fprintf(stderr, "XXX: ACCEPTED!\n");
 		test_fd = cfd;
 
-
 /*		char *fname = "main.GetConnection";
 		unsigned long readdr = 0x0000000000402d60;
 		int res = call_remote_intercept(-1, &fname, &readdr, 1);
@@ -350,9 +349,37 @@ decode_param(pid_t pid, void *sp, golang_data_type dtype, void *pval) {
 	return NULL;
 }
 
+// XXX: this obviously doesn't really work.
 int
 is_pid_new(pid_t pid) {
 	return 1;
+}
+
+int
+check_remote_intercept(pid_t pid, void *pc, struct user_regs_struct *regs) {
+	struct lt_symbol *lts;
+	char *symname;
+	size_t i;
+
+	for (i = 0; i < remote_intercept_entries; i++) {
+		if (remote_intercepts[i].addr == pc) {
+			int ret;
+
+			symname = remote_intercepts[i].fname;
+			fprintf(stderr, "XXX: OOOOOOOOOOOOH YEAH: %s\n", symname);
+			lts = lt_symbol_bind(cfg.sh, pc, symname);
+			lt_tsd_t *tsdx = thread_get_tsd(pid, 1);
+
+			if (!remote_intercepts[i].is_entry)
+				ret = sym_exit(symname, lts, "from", "to", pid, regs, regs, tsdx);
+			else
+				ret = sym_entry(symname, lts, "from", "to", pid, regs, tsdx);
+
+			return 0;
+		}
+	}
+
+	return -1;
 }
 
 int
@@ -373,14 +400,15 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 			if (is_pid_new(pid)) {
 
 				if (ptrace(PTRACE_SETOPTIONS, pid, NULL, trace_flags) < 0) {
-					perror("ptrace(PTRACE_SETOPTIONS)111");
+					perror("ptrace(PTRACE_SETOPTIONS)");
 					exit(EXIT_FAILURE);
 				}
 
-				if (set_all_intercepts(pid) < 0) {
+/*				if (set_all_intercepts(pid) < 0) {
 					fprintf(stderr, "Error encountered while setting intercepts in new process.\n");
 					exit(EXIT_FAILURE);
 				}
+				fprintf(stderr, "XXX: skipping set intercepts on pid %d\n", pid);*/
 
 				// We will return into a loop that will perform this action for us.
 /*				if (ptrace(PTRACE_CONT, pid, NULL, 0) < 0) {
@@ -408,18 +436,7 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 	hot_sp = (void *)(regs.rsp + sizeof(void *));
 
 	// Check for remote intercept first.
-	for (i = 0; i < remote_intercept_entries; i++) {
-		if (remote_intercepts[i].addr == hot_pc) {
-			symname = remote_intercepts[i].fname;
-			fprintf(stderr, "XXX: OOOOOOOOOOOOH YEAH: %s\n", symname);
-			lts = lt_symbol_bind(cfg.sh, hot_pc, symname);
-			lt_tsd_t *tsdx = thread_get_tsd(pid, 1);
-
-			if (!remote_intercepts[i].is_entry)
-				ret = sym_exit(symname, lts, "from", "to", pid, &regs, &regs, tsdx);
-			else
-				ret = sym_entry(symname, lts, "from", "to", pid, &regs, tsdx);
-		}
+	if (!check_remote_intercept(pid, hot_pc, &regs)) {
 	}
 
 	for (i = 0; i < saved_prolog_entries; i++) {
@@ -435,7 +452,7 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 		}
 
 		if (ra == saved_ret_prolog_entries) {
-			fprintf(stderr, "Unexpected error: trace trap not at known intercept point (%p).\n", hot_pc);
+			PRINT_ERROR("Unexpected error: trace trap not at known intercept point (%p).\n", hot_pc);
 			return -1;
 		}
 
@@ -465,7 +482,7 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 //		printf("RET ADDR would have been %lx\n", ret_addr);
 		symname = lookup_addr(hot_pc);
 		if (set_ret_intercept(pid, symname, (void *)ret_addr, &ridx) < 0) {
-			fprintf(stderr, "Error: could not set intercept on return address\n");
+			PRINT_ERROR("%s", "Error: could not set intercept on return address\n");
 	//		return -1;
 		} else {
 			__sync_add_and_fetch(&(saved_ret_prologs[ridx].refcnt), 1);
@@ -529,7 +546,7 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 	}
 
 	if (!WIFSTOPPED(wait_status) || (WSTOPSIG(wait_status) != SIGTRAP)) {
-		fprintf(stderr, "Error: single step process returned in unexpected fashion.\n");
+		PRINT_ERROR("%s", "Error: single step process returned in unexpected fashion.\n");
 		return -1;
 	}
 
@@ -551,10 +568,46 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 	return 1;
 }
 
+int
+analyze_clone_call(pid_t pid, pid_t cpid) {
+	pid_t newpid;
+	int cflags, ws;
+	struct user_regs_struct regs;
+
+	if (ptrace(PTRACE_SYSCALL, pid, NULL, NULL) < 0) {
+		perror("ptrace(PTRACE_SYSCALL)");
+		return -1;
+	}
+
+	if (waitpid(pid, &ws, 0) < 0) {
+		perror("waitpid");
+		return -1;
+	}
+
+	if (ptrace(PTRACE_GETREGS, pid, 0, &regs) < 0) {
+		perror("ptrace(PTRACE_GETREGS)");
+		return -1;
+	}
+
+	newpid = (pid_t)regs.rax;
+	cflags = (int)regs.rdi;
+	fprintf(stderr, "XXX: New pid: %d, flags = %x\n", newpid, cflags);
+
+	if (newpid != cpid) {
+		PRINT_ERROR("%s", "Unexpected error: pid returned by clone() did not match ptrace() query.\n");
+		return -1;
+	}
+
+	if (cflags & CLONE_VM)
+		return 1;
+
+	return 0;
+}
+
 void
 dump_wait_state(pid_t pid, int status, int force) {
 	int dbg_level = 1;
-	int needs_pid = 0;
+	int needs_pid = 0, did_clone = 0;
 
 	if (force)
 		dbg_level = 0;
@@ -585,7 +638,7 @@ dump_wait_state(pid_t pid, int status, int force) {
 
 		// PTRACE_PEEKSIGINFO
 		if (ptrace(pid, PTRACE_GETSIGINFO, NULL, &si) < 0) {
-			perror("ptrace(PTACE_GETSIGINFO)");
+			perror("ptrace(PTRACE_GETSIGINFO)");
 		} else {
 			DEBUG_PRINT(dbg_level, "si_code=%d, si_pid=%d, si_uid=%d, si_status=%d, si_addr=%p, "
 				"si_call_addr=%p, si_syscall=%d\n",
@@ -597,6 +650,7 @@ dump_wait_state(pid_t pid, int status, int force) {
 	if ((status >> 8) == (SIGTRAP | (PTRACE_EVENT_CLONE << 8))) {
 		PRINT_ERROR("%s", "Detected clone() event\n");
 		needs_pid = 1;
+		did_clone = 1;
 	}
 	else if ((status >> 8) == (SIGTRAP | (PTRACE_EVENT_EXEC << 8)))
 		PRINT_ERROR("%s", "Detected exec() event\n");
@@ -618,13 +672,49 @@ dump_wait_state(pid_t pid, int status, int force) {
 
 	if (needs_pid) {
 		unsigned long msg;
+		pid_t npid;
 
 		if (ptrace(PTRACE_GETEVENTMSG, pid, NULL, &msg) < 0) {
-			perror("ptrace(PTACE_GETEVENTMSG)");
+			perror("ptrace(PTRACE_GETEVENTMSG)");
 			exit(EXIT_FAILURE);
 		}
 
-		PRINT_ERROR("Event generated by pid = %d\n", (int)msg);
+		npid = (pid_t)msg;
+
+		PRINT_ERROR("Event generated by pid = %d\n", npid);
+
+		if (did_clone) {
+			int cret;
+
+			cret = analyze_clone_call(pid, npid);
+			if (cret < 0)
+				PRINT_ERROR("%s", "Unexpected error inspecting result of call to clone()\n");
+			else if (cret > 0) {
+				fprintf(stderr, "XXX: exempting new process from intercepts: %d\n", npid);
+			} else {
+				int w;
+				if (waitpid(npid, &w, 0) < 0) {
+					perror("waitpid");
+					exit(EXIT_FAILURE);
+				}
+
+				if (WIFSTOPPED(w) && (WSTOPSIG(w) == SIGSTOP)) {
+					if (set_all_intercepts(npid) < 0) {
+						PRINT_ERROR("Error encountered while setting intercepts in new process %d\n", npid);
+						exit(EXIT_FAILURE);
+					}
+				} else
+					PRINT_ERROR("Warning: traced pid %d was stopped for unexpected reason.\n", npid);
+
+				if (ptrace(PTRACE_CONT, npid, NULL, 0) < 0) {
+					perror("ptrace(PTRACE_CONT) [6]");
+					exit(EXIT_FAILURE);
+				}
+
+			}
+
+		}
+
 	}
 
 	// PTRACE_O_TRACESYSGOOD?
@@ -842,7 +932,7 @@ set_all_intercepts(pid_t pid) {
 //				printf("CANDIDATE: %s - %lx\n", symbol_store[i].map[j].name, symbol_store[i].map[j].addr);
 
 				if (is_intercept_excluded(symbol_store[i].map[j].name)) {
-					fprintf(stderr, "Skipping over excluded intercept: %s\n", symbol_store[i].map[j].name);
+					PRINT_ERROR("Skipping over excluded intercept: %s\n", symbol_store[i].map[j].name);
 					continue;
 				}
 
@@ -850,7 +940,7 @@ set_all_intercepts(pid_t pid) {
 					continue;
 
 				if (set_intercept(pid, (void *)symbol_store[i].map[j].addr) < 0) {
-					fprintf(stderr, "Error: could not set intercept on symbol: %s\n", symbol_store[i].map[j].name);
+					PRINT_ERROR("Error: could not set intercept on symbol: %s\n", symbol_store[i].map[j].name);
 					return -1;
 				}
 			}
@@ -859,7 +949,7 @@ set_all_intercepts(pid_t pid) {
 
 	}
 
-	fprintf(stderr, "Set intercepts.\n");
+	fprintf(stderr, "XXX: Set intercepts on %d\n", pid);
 	return 0;
 }
 
@@ -911,7 +1001,7 @@ print_instruction(pid_t pid, void *addr, size_t len) {
 	uint8_t *idata;
 
 	if (!(rdata = read_bytes_remote(pid, addr, len))) {
-		fprintf(stderr, "Error: could not print instruction at %p\n", addr);
+		PRINT_ERROR("Error: could not print instruction at %p\n", addr);
 		return;
 	}
 
@@ -991,7 +1081,7 @@ trace_program(const char *progname, char * const *args) {
 	printf("Parent detected possible exec\n");
 
 	if (set_all_intercepts(pid) < 0) {
-		fprintf(stderr, "Error encountered while setting intercepts.\n");
+		PRINT_ERROR("%s", "Error encountered while setting intercepts.\n");
 		exit(EXIT_FAILURE);
 	}
 
@@ -1034,7 +1124,7 @@ trace_program(const char *progname, char * const *args) {
 		dump_wait_state(cpid, wait_status, 0);
 
 		if (handle_trace_trap(cpid, wait_status, 0) < 1) {
-			fprintf(stderr, "Error: something bad happened while handling trace trap\n");
+			PRINT_ERROR("%s", "Error: something bad happened while handling trace trap\n");
 
 			if (WIFSTOPPED(wait_status) && (WSTOPSIG(wait_status) == SIGSEGV)) {
 				struct user_regs_struct regs;

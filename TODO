@@ -2,4 +2,4 @@
 remove transformer call stacks
 support lookups on itabs
 * eliminate static lookup of types (i.e. "net.TCPConn")
-* prevent unnecessary multiple setting of all intercepts
+* analysis of clone call should not occur in dump_wait_state() function
