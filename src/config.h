@@ -74,14 +74,6 @@ extern lt_tsd_t *thread_get_tsd(pid_t tid, int create);
 
 #include "args.h"
 
-#ifdef __GNUC__
-#define NORETURN __attribute__((__noreturn__))
-#else
-#define NORETURN
-#ifndef __attribute__
-#define __attribute__(x)
-#endif
-#endif
 
 #define LT_NAMES_MAX  50
 #define LT_NAMES_SEP  ','
@@ -103,12 +95,6 @@ struct lt_config_opt {
 
 struct lt_config_shared {
 #define GT_CONFIG_VERSION	1
-#define GT_CONFIG_MAGIC		((GT_CONFIG_VERSION << 16) + 0xdead)
-	unsigned int magic;
-
-#define LT_LIBS_MAXSIZE     4096
-
-	char libs_subst[LT_LIBS_MAXSIZE];
 
 #define LT_SYMBOLS_MAXSIZE  4096
 	char symbols[LT_SYMBOLS_MAXSIZE];
@@ -159,7 +145,6 @@ struct lt_config_app {
 	 * one PRINT_VERBOSE only.
 	 */
 	struct lt_config_shared *sh;
-	struct lt_config_shared sh_storage;
 
 	char *prog;
 #define LT_NUM_ARG 500
@@ -174,14 +159,7 @@ struct lt_config_app {
 
 
 struct lt_config_audit {
-
-	/*
-	 * Normally sh points to the sh_storage. When using
-	 * ctl-config feature, the shared config is stored
-	 * in mmaped area.
-        */
 	struct lt_config_shared *sh;
-	struct lt_config_shared sh_storage;
 
 	char *symbols[LT_NAMES_MAX];
 	int symbols_cnt;
@@ -199,11 +177,6 @@ struct lt_config_audit {
 	int init_ok;
 };
 
-/* config - list name support */
-struct lt_config_ln {
-	char *name;
-	struct lt_list_head list;
-};
 
 #define lt_sh(cfg, field) ((cfg)->sh->field)
 
@@ -279,6 +252,16 @@ struct lt_symbol* lt_symbol_get(struct lt_config_shared *cfg,
 
 /* tracer */
 char *call_remote_serializer(pid_t pid, const char *name, void *addr);
+
+/* network */
+ssize_t xsend(pid_t pid, int sockfd, const void *buf, size_t len);
+ssize_t xrecv(pid_t pid, int sockfd, void *buf, size_t len);
+int send_gt_msg(pid_t pid, int fd, int reqtype, void *data, size_t dlen);
+void *recv_gt_msg(pid_t pid, int fd, int reqtype, size_t *plen, int *preqtype);
+
+/* misc */
+void perror_pid(const char *msg, pid_t pid);
+pid_t gettid(void);
 
 
 #define PRINT(fmt, args...) \

@@ -95,20 +95,6 @@ int save_remote_intercept(pid_t pid, const char *fname, void *addr, int is_entry
 void cleanup(void);
 void handle_int(int signo);
 
-void perror_pid(const char *msg, pid_t pid);
-
-
-void
-perror_pid(const char *msg, pid_t pid) {
-	char outbuf[1024];
-
-	memset(outbuf, 0, sizeof(outbuf));
-	snprintf(outbuf, sizeof(outbuf), "%sError in %s (%d)%s",
-		BOLDRED, msg, pid, RESET);
-	perror(outbuf);
-	return;
-}
-
 
 void
 cleanup(void) {
@@ -130,78 +116,30 @@ handle_int(int signo) {
 
 
 static int test_fd = -1;
+static pid_t test_pid = -1;
 
 void *
 call_remote_func(pid_t pid, unsigned char reqtype, void *data, size_t dsize, size_t *psize)
 {
 	void *result;
-	gomod_data_hdr_t hdr;
-	int res;
-
-	if (dsize > 0xffff) {
-		PRINT_ERROR("Error calling gomod function with oversized data buffer (%zu bytes)\n", dsize);
-		return NULL;
-	}
-
-	memset(&hdr, 0, sizeof(hdr));
-	hdr.magic = GOMOD_DATA_MAGIC;
-	hdr.size = dsize;
-	hdr.reqtype = reqtype;
+	int oreqtype;
 
 	int fd = test_fd;
 
-	if ((res = send(fd, &hdr, sizeof(hdr), 0)) != sizeof(hdr)) {
-		if (res == -1)
-			perror_pid("send", pid);
-
-		PRINT_ERROR("%s", "Error encountered in calling gomod function.\n");
-		return NULL;
-	}
-
-	if ((res = send(fd, data, dsize, 0)) != dsize) {
-		if (res == -1)
-			perror_pid("send", pid);
-
+	if (send_gt_msg(pid, fd, reqtype, data, dsize) < 0) {
 		PRINT_ERROR("%s", "Error encountered in calling gomod function.\n");
 		return NULL;
 	}
 
 	fprintf(stderr, "Sent and waiting to receive\n");
 
-	if ((res = recv(fd, &hdr, sizeof(hdr), MSG_WAITALL)) != sizeof(hdr)) {
-		if (res == -1)
-			perror_pid("recv", pid);
+	result = recv_gt_msg(pid, fd, reqtype, psize, &oreqtype);
 
-		PRINT_ERROR("%s", "Error encountered in retrieving remote result header of gomod function.\n");
-		return NULL;
-	}
-
-	if (hdr.magic != GOMOD_DATA_MAGIC) {
-		PRINT_ERROR("%s", "Error retrieving gomod function result with unexpected data formatting.\n");
-		return NULL;
-	} else if (hdr.reqtype != reqtype) {
-		PRINT_ERROR("%s", "Error retrieving gomod function result with mismatched request type.\n");
-		return NULL;
-	}
-
-	PRINT_ERROR("GO MOD RETURN SIZE = %u bytes\n", hdr.size);
-
-	if (!(result = malloc(hdr.size))) {
-		perror_pid("malloc", pid);
-		return NULL;
-	}
-
-	if ((res = recv(fd, result, hdr.size, MSG_WAITALL)) != hdr.size) {
-		if (res == -1)
-			perror_pid("recv", pid);
-
-		PRINT_ERROR("%s", "Error encountered in retrieving remote result body of gomod function.\n");
+	if (result && (reqtype != oreqtype)) {
+		PRINT_ERROR("Error receiving gotrace socket data of unexpected response type (%d)\n", oreqtype);
 		free(result);
 		return NULL;
 	}
-
-	if (psize)
-		*psize = hdr.size;
 
 	return result;
 }
@@ -266,6 +204,11 @@ gotrace_socket_loop(void *param) {
 
 		fprintf(stderr, "XXX: ACCEPTED!\n");
 		test_fd = cfd;
+
+/*		if (set_all_intercepts(test_pid) < 0) {
+			PRINT_ERROR("%s", "Error encountered while setting intercepts.\n");
+			exit(EXIT_FAILURE);
+		}*/
 
 /*		char *fname = "main.GetConnection";
 		unsigned long readdr = 0x0000000000402d60;
@@ -1092,8 +1035,9 @@ trace_program(const char *progname, char * const *args) {
 		PRINT_ERROR("%s", "Error encountered while setting intercepts.\n");
 		exit(EXIT_FAILURE);
 	}
+	test_pid = pid;
 
-	dump_intercepts();
+//	dump_intercepts();
 
 	start_listener();
 

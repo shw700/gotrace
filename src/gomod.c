@@ -353,6 +353,7 @@ static int client_loop_initialized = 0;
 void *
 client_socket_loop(void *arg) {
 	int fd = (int)((uintptr_t)arg);
+	pid_t tid = gettid();
 
 	client_loop_initialized = 1;
 
@@ -361,59 +362,26 @@ client_socket_loop(void *arg) {
 //	fprintf(stderr, "Loop continuing.\n");
 
 	while (1) {
-		gomod_data_hdr_t hdr;
 		unsigned char *dbuf;
-		int res;
+		size_t dblen;
+		int reqtype;
 
-		fprintf(stderr, "Loop Attempting to read %zu bytes from %d\n", sizeof(hdr), fd);
+		fprintf(stderr, "Loop Attempting to read bytes from %d\n", fd);
 
-		if ((res = recv(fd, &hdr, sizeof(hdr), MSG_WAITALL)) == -1) {
-			perror("recv");
-			fprintf(stderr, "Error receiving data from gotrace control socket.\n");
-			break;
-		} else if (res != sizeof(hdr)) {
-			fprintf(stderr, "Unexpected error receiving data from gotrace control socket.\n");
-			break;
-		}
+		dbuf = recv_gt_msg(tid, fd, -1, &dblen, &reqtype);
 
-//		fprintf(stderr, "LOOP NEXT\n");
+		fprintf(stderr, "Loop CMD SIZE: %zu bytes / type %u\n", dblen, reqtype);
 
-		if (hdr.magic != GOMOD_DATA_MAGIC) {
-			fprintf(stderr, "Error retrieving gomod function request with unexpected data formatting.\n");
-			break;
-		} else if ((hdr.reqtype != GOMOD_RT_SET_INTERCEPT) && (hdr.reqtype != GOMOD_RT_SERIALIZE_DATA)) {
-			fprintf(stderr, "Error retrieving gomod function request with unrecognized type.\n");
-			break;
-		}
-
-		fprintf(stderr, "Loop CMD SIZE: %u bytes / type %u\n", hdr.size, hdr.reqtype);
-
-		if (!(dbuf = malloc(hdr.size))) {
-			perror("malloc");
-			break;
-		}
-
-		if ((res = recv(fd, dbuf, hdr.size, MSG_WAITALL)) != hdr.size) {
-			if (res == -1)
-				perror("recv");
-
-			fprintf(stderr, "Unexpected error receiving request body data from gotrace control socket.\n");
-			free(dbuf);
-			break;
-		}
-
-	fprintf(stderr, "Loop: read all data\n");
-
-		if (hdr.reqtype == GOMOD_RT_SET_INTERCEPT) {
+		if (reqtype == GOMOD_RT_SET_INTERCEPT) {
 			unsigned long iret, *addrp, addr_new;
 
-			if (hdr.size % sizeof(void *)) {
-				fprintf(stderr, "Error: Received set intercept request with invalid size (%u bytes).\n", hdr.size);
+			if (dblen % sizeof(void *)) {
+				fprintf(stderr, "Error: Received set intercept request with invalid size (%zu bytes).\n", dblen);
 				free(dbuf);
 				break;
 			}
 
-			fprintf(stderr, "Loop received set intercept request (n=%u).\n", (unsigned int)(hdr.size / sizeof(void *)));
+			fprintf(stderr, "Loop received set intercept request (n=%u).\n", (unsigned int)(dblen / sizeof(void *)));
 			addrp = (unsigned long *)dbuf;
 			iret = set_intercept_redirect((void *)*addrp, &addr_new);
 
@@ -423,22 +391,11 @@ client_socket_loop(void *arg) {
 			} else {
 				fprintf(stderr, "Loop: intercept on %p -> %p\n",
 					(void *)*addrp, (void *)iret);
-				// hdr size stays the same, and of course reqtype too
+
 				memcpy(dbuf, &addr_new, sizeof(addr_new));
 
-				if ((res = send(fd, &hdr, sizeof(hdr), 0) != sizeof(hdr))) {
-					if (res == -1)
-						perror("send");
-
-					fprintf(stderr, "Unexpected error sending back response header data on gotrace control socket.\n");
-					free(dbuf);
-					break;
-				}
-
-				if ((res = send(fd, dbuf, hdr.size, 0) != hdr.size)) {
-					if (res == -1)
-						perror("send");
-
+				// hdr size stays the same, and of course reqtype too
+				if (send_gt_msg(tid, fd, reqtype, dbuf, dblen) < 0) {
 					fprintf(stderr, "Unexpected error sending back response body data on gotrace control socket.\n");
 					free(dbuf);
 					break;
@@ -447,7 +404,7 @@ client_socket_loop(void *arg) {
 			}
 
 			free(dbuf);
-		} else if (hdr.reqtype == GOMOD_RT_SERIALIZE_DATA) {
+		} else if (reqtype == GOMOD_RT_SERIALIZE_DATA) {
 			unsigned long *fdata;
 			char *sdata, *fname = (char *)dbuf;
 
@@ -460,22 +417,9 @@ client_socket_loop(void *arg) {
 				break;
 			} else {
 //				fprintf(stderr, "Loop serialized struct data: [%s]\n", sdata);
-				hdr.size = strlen(sdata) + 1;
 				free(dbuf);
 
-				if ((res = send(fd, &hdr, sizeof(hdr), 0) != sizeof(hdr))) {
-					if (res == -1)
-						perror("send");
-
-					fprintf(stderr, "Unexpected error sending back response header data on gotrace control socket.\n");
-					free(sdata);
-					break;
-				}
-
-				if ((res = send(fd, sdata, hdr.size, 0) != hdr.size)) {
-					if (res == -1)
-						perror("send");
-
+				if (send_gt_msg(tid, fd, reqtype, sdata, strlen(sdata)) < 0) {
 					fprintf(stderr, "Unexpected error sending back response body data on gotrace control socket.\n");
 					free(sdata);
 					break;

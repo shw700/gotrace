@@ -36,6 +36,8 @@ GOTRACE_OBJS=\
 	src/args.o \
 	src/thread.o \
 	src/serializer.o \
+	src/network.o \
+	src/misc.o \
 	src/sysdeps/$(CONFIG_SYSDEP_DIR)/stack.o
 
 OBJS+=$(GOTRACE_OBJS) $(GOMOD_OBJS)
@@ -58,6 +60,8 @@ GOMOD_LDFLAGS="-Wl,-init=_gomod_init" -fPIC -shared $(LDFLAGS)
 GOMOD_LIB=-ldl -lpthread gomod_printlib.a $(ZYDIS_LIB)
 GOMOD_OBJS=\
 	src/gomod.o \
+	src/network.o \
+	src/misc.o \
 	src/dlopen_stub.o \
 	src/serializer_mod.o \
 	src/intercept.o
