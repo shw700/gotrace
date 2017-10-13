@@ -29,6 +29,16 @@ char *call_golang_func_str(void *func, void *param);
 char *call_data_serializer(const char *dtype, void *addr);
 
 
+typedef struct landing_pad {
+	size_t total_alloc;
+	size_t total_used;
+	void *data;
+	struct landing_pad *next;
+} landing_pad_t;
+
+landing_pad_t *landing_pads = NULL;
+
+
 int
 call_mallocinit() {
 	static jmp_buf j;
@@ -236,14 +246,48 @@ instruction_bytes_needed(void *addr, size_t minsize) {
 	return total;
 }
 
+#define DEFAULT_ALLOC_SIZE	65536
 void *
 get_landing_pad(size_t size) {
+	landing_pad_t *newlp, *lptr = landing_pads;
 	void *buf;
 
-	if ((buf = mmap(NULL, 4096, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_ANONYMOUS|MAP_PRIVATE, 0, 0)) == MAP_FAILED) {
+	while (lptr) {
+
+		if ((lptr->total_alloc - lptr->total_used) >= size) {
+			void *dptr = lptr->data + lptr->total_used;
+
+			lptr->total_used += size;
+			return dptr;
+		}
+
+		lptr = lptr->next;
+	}
+
+	// Didn't find the free space; will need to allocate more memory.
+	lptr = landing_pads;
+	while (lptr && lptr->next != NULL)
+		lptr = lptr->next;
+
+	if ((buf = mmap(NULL, DEFAULT_ALLOC_SIZE, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_ANONYMOUS|MAP_PRIVATE, 0, 0)) == MAP_FAILED) {
 		perror("mmap");
 		return NULL;
 	}
+
+	if (!(newlp = malloc(sizeof(*newlp)))) {
+		perror("malloc");
+		return NULL;
+	}
+
+	memset(newlp, 0, sizeof(*newlp));
+	newlp->data = buf;
+	newlp->total_alloc = DEFAULT_ALLOC_SIZE;
+	newlp->total_used = size;
+
+	if (!landing_pads)
+		landing_pads = newlp;
+	else
+		lptr->next = newlp;
 
 	return buf;
 }

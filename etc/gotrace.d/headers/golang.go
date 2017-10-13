@@ -120,6 +120,25 @@ func errors.New(text string) error
 //func runtime.netpoll(block bool) *g
 func runtime.netpoll(block bool) g
 func net.IP.IsLoopback() bool
+func net.selfConnect(fd *netFD, err error) bool
+//func LookupPort(network, service string) (port int, err error
+func net.LookupPort(network string, service string) (int, error)
+//func dtoi(s string) (n int, i int, ok bool
+func net.dtoi(s string) (int, int)
+//func parseIPv4(s string) IP
+func net.parseIPv4(s string) net.IP
+//func parseIPv6(s string, zoneAllowed bool) (ip IP, zone string)
+func net.parseIPv6(s string, zoneAllowed bool) (net.IP, string)
+//func splitHostZone(s string) (host, zone string
+func net.splitHostZone(s string) (string, string)
+//func SplitHostPort(hostport string) (host, port string, err error
+func net.SplitHostPort(hostport string) (string, string)
+//func xtoi(s string) (n int, i int, ok bool)
+func net.xtoi(s string) (int, int)
+func net.last(s string, b byte) int
+//func ResolveTCPAddr(network, address string) (*TCPAddr, error
+func net.ResolveTCPAddr(network string, address string) (net.TCPAddr, error)
+//func net.ipToSockaddr(family int, ip IP, port int, zone string) (syscall.Sockaddr, error)
 
 func runtime/internal/atomic.Load(ptr *uint32) uint32
 func runtime.memmove(to *any, frm *any, length uintptr)
@@ -165,4 +184,3 @@ func strings.IndexByte(s string, c byte)
 
 // Network
 func runtime.netpollinited() bool
-func net.selfConnect(fd *netFD, err error) bool
