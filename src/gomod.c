@@ -331,7 +331,8 @@ set_intercept_redirect(void *addr, unsigned long *ptrapaddr) {
 	memcpy(addr, tramp_data, sizeof(tramp_data));
 
 	if (ptrapaddr) {
-		*ptrapaddr = uaddr + sizeof(tramp_data) + 1;
+//		*ptrapaddr = uaddr + sizeof(tramp_data) + 1;
+		*ptrapaddr = uaddr + to_copy;
 	}
 
 	return (unsigned long)trampoline;

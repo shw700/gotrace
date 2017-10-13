@@ -72,7 +72,7 @@ char gotrace_socket_path[128];
 char *excluded_intercepts[] = {
 //	"runtime.(*mcache).refill",
 	"main.GetConnection",
-//	"main.TouchConnection"
+	"main.TouchConnection"
 };
 
 extern char *read_string_remote(pid_t pid, char *addr, size_t slen);
@@ -272,8 +272,8 @@ gotrace_socket_loop(void *param) {
 		fprintf(stderr, "XXX: int res = %d\n", res);
 
 		fname = "main.TouchConnection";
-		readdr = 0x0000000000402c60;*/
-/*		res = call_remote_intercept(-1, &fname, &readdr, 1, 1);
+		readdr = 0x0000000000402c60;
+		res = call_remote_intercept(-1, &fname, &readdr, 1, 1);
 		fprintf(stderr, "XXX: int res = %d\n", res);*/
 
 
@@ -475,6 +475,7 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 
 	// Check for remote intercept first.
 	if (!check_remote_intercept(pid, hot_pc, &regs)) {
+		return 0;
 	}
 
 	for (i = 0; i < saved_prolog_entries; i++) {
@@ -491,6 +492,7 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 
 		if (ra == saved_ret_prolog_entries) {
 			PRINT_ERROR("Unexpected error: trace trap not at known intercept point (%p).\n", hot_pc);
+			print_instruction(pid, (void *)hot_pc, 16);
 			return -1;
 		}
 
