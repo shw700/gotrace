@@ -1431,6 +1431,20 @@ static int getstr_pod(struct lt_config_shared *cfg, int dspname, struct lt_arg *
 	
 	*arglen = 0;
 
+	if (arg->real_type_name && is_type_serialization_supported(arg->real_type_name)) {
+		const char *dname1, *dname2;
+		char *sres;
+
+		dname1 = dspname ? arg->name : "";
+		dname2 = dspname ? "=" : "";
+
+		if ((sres = call_remote_serializer(-1, arg->real_type_name, pval))) {
+			len = snprintf(argbuf, alen, "%s%s%s", dname1, dname2, sres);
+			free(sres);
+			goto out;
+		}
+	}
+
 	if (arg->type_id == LT_ARGS_TYPEID_FNPTR) {
 		void *fn = pval;
 		const char *fname;
@@ -1676,19 +1690,6 @@ int lt_args_cb_arg(struct lt_config_shared *cfg, struct lt_arg *arg, void *pval,
 		   struct lt_args_data *data, int last, int dspname, int multi_fmt)
 {
 	int len = data->arglen;
-
-	if (arg->real_type_name && is_type_serialization_supported(arg->real_type_name)) {
-		char *sres;
-
-		if ((sres = call_remote_serializer(-1, arg->real_type_name, pval))) {
-			size_t nleft = 64;
-
-			strncpy(data->args_buf + data->args_totlen, sres, nleft);
-			free(sres);
-			return 0;
-		}
-
-	}
 
 	PRINT_VERBOSE(cfg, 1, "arg '%s %s', pval %p, last %d\n",
 				arg->type_name, arg->name, pval, last);

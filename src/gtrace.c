@@ -75,7 +75,8 @@ char *excluded_intercepts[] = {
 	"main.TouchConnection"
 };
 
-extern char *read_string_remote(pid_t pid, char *addr, size_t slen);
+char *read_bytes_remote(pid_t pid, char *addr, size_t slen);
+void print_instruction(pid_t pid, void *addr, size_t len);
 
 void *call_remote_func(pid_t pid, unsigned char reqtype, void *data, size_t dsize, size_t *psize);
 int call_remote_intercept(pid_t pid, char **funcnames, unsigned long *addresses, size_t naddr, int is_entry);
@@ -335,42 +336,6 @@ is_intercept_excluded(const char *fname) {
 	return 0;
 }
 
-void *
-decode_param(pid_t pid, void *sp, golang_data_type dtype, void *pval) {
-	long val;
-
-	errno = 0;
-	val = ptrace(PTRACE_PEEKDATA, pid, sp, 0);
-	if (errno != 0) {
-		perror_pid("ptrace(PTRACE_PEEKDATA)", pid);
-		return NULL;
-	}
-
-	if (dtype == gint) {
-		*((int *)pval) = (int)val;
-		return sp + sizeof(void *);
-	} else if (dtype == gstring) {
-		char *str;
-		long slen;
-
-		errno = 0;
-		slen = ptrace(PTRACE_PEEKDATA, pid, sp+sizeof(void *), 0);
-		if (errno != 0) {
-			perror_pid("ptrace(PTRACE_PEEKDATA)", pid);
-			return NULL;
-		}
-
-//		*((char **)pval) = (char *)val;
-		if (!(str = read_string_remote(pid, (void *)val, slen)))
-			return NULL;
-		*((char **)pval) = str;
-
-		return sp + ((sizeof(void *)) * 2);
-	}
-
-	return NULL;
-}
-
 // XXX: this obviously doesn't really work.
 int
 is_pid_new(pid_t pid) {
@@ -403,6 +368,9 @@ check_remote_intercept(pid_t pid, void *pc, struct user_regs_struct *regs) {
 				fprintf(stderr, "XXX: YUPP %p\n", (void *)retaddr);
 				int res = call_remote_intercept(pid, &symname, &retaddr, 1, 0);
 				fprintf(stderr, "XXX: res = %d\n", res);
+
+				// Now we we must compensate for the size of the extra return address on the stack.
+				regs->rsp += sizeof(void *);
 			}
 
 			lts = lt_symbol_bind(cfg.sh, pc, symname);

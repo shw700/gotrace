@@ -18,6 +18,7 @@
 
 
 extern void *___dlopen_stub;
+extern void *func_hook_start, *func_hook_end;
 int _gotrace_socket_fd = -1;
 
 void *client_socket_loop(void *arg);
@@ -295,10 +296,23 @@ get_landing_pad(size_t size) {
 
 unsigned long
 set_intercept_redirect(void *addr, unsigned long *ptrapaddr) {
+	static char *landing_code = NULL;
+	static size_t landing_size = 0;
 	unsigned char *trampoline;
 	unsigned long uaddr;
 	unsigned long addr_base, page_mask, page_size = 4096;
-	size_t to_copy;
+	size_t to_copy, to_allocate;
+
+	if (!landing_code) {
+		landing_size = (unsigned long)&func_hook_end - (unsigned long)&func_hook_start;
+
+		if (!(landing_code = malloc(landing_size))) {
+			perror("malloc");
+			return 0;
+		}
+
+		memcpy(landing_code, &func_hook_start, landing_size);
+	}
 
 	page_mask = ~(page_size - 1);
 	addr_base = (unsigned long)addr & page_mask;
@@ -308,32 +322,28 @@ set_intercept_redirect(void *addr, unsigned long *ptrapaddr) {
 		return 0;
 	}
 
-	unsigned char tramp_data[] = { 0x48, 0xb8,
-		0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11, 0xff, 0xd0 };
-	const unsigned char trap_ret[] = { 0xcc, 0xc3 };
-	size_t to_allocate;
-
-	if (!(to_copy = instruction_bytes_needed(addr, sizeof(tramp_data))))
+	if (!(to_copy = instruction_bytes_needed(addr, landing_size)))
 		return 0;
 
-	to_allocate = to_copy + sizeof(trap_ret);
+	// 2 bytes: trap and return
+	to_allocate = to_copy + 2;
 
 	if (!(trampoline = get_landing_pad(to_allocate)))
 		return 0;
 
-//	fprintf(stderr, "XXX to copy went from %zu to %zu\n", sizeof(tramp_data), to_copy);
+//	fprintf(stderr, "XXX to copy went from %zu to %zu\n", landing_size, to_copy);
 	uaddr = (unsigned long)trampoline;
-	memcpy(tramp_data+2, &uaddr, sizeof(uaddr));
+	memcpy(landing_code+2, &uaddr, sizeof(uaddr));
 
-	memcpy(trampoline, addr, to_copy);
-	memcpy(trampoline+to_copy, &trap_ret, sizeof(trap_ret));
+	*trampoline = 0xcc;
+	memcpy(trampoline+1, addr, to_copy);
+	trampoline[to_allocate - 1] = 0xc3;
+
 	memset(addr, 0x90, to_copy);
-	memcpy(addr, tramp_data, sizeof(tramp_data));
+	memcpy(addr, landing_code, landing_size);
 
-	if (ptrapaddr) {
-//		*ptrapaddr = uaddr + sizeof(tramp_data) + 1;
-		*ptrapaddr = uaddr + to_copy;
-	}
+	if (ptrapaddr)
+		*ptrapaddr = uaddr;
 
 	return (unsigned long)trampoline;
 }

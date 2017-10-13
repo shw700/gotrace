@@ -330,6 +330,8 @@ XDEF '(' ARGS ')' VAR_NAME
 	arg->latrace_custom_func_transformer = farg->latrace_custom_func_transformer;
 	arg->latrace_custom_func_intercept = farg->latrace_custom_func_intercept;
 
+	arg->real_type_name = strdup($5);
+
 	free(farg);
 	farg = arg;
 
