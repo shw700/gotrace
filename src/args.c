@@ -1678,7 +1678,7 @@ int lt_args_cb_arg(struct lt_config_shared *cfg, struct lt_arg *arg, void *pval,
 	if (arg->real_type_name && (!strcmp(arg->real_type_name, "net.TCPConn"))) {
 		char *sres;
 
-		if ((sres = call_remote_serializer(arg->real_type_name, pval))) {
+		if ((sres = call_remote_serializer(-1, arg->real_type_name, pval))) {
 			size_t nleft = 64;
 
 			strncpy(data->args_buf + data->args_totlen, sres, nleft);

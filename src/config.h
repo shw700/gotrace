@@ -278,7 +278,7 @@ struct lt_symbol* lt_symbol_get(struct lt_config_shared *cfg,
 				void *ptr, const char *name);
 
 /* tracer */
-char *call_remote_serializer(const char *name, void *addr);
+char *call_remote_serializer(pid_t pid, const char *name, void *addr);
 
 
 #define PRINT(fmt, args...) \

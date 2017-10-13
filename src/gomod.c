@@ -309,7 +309,7 @@ client_socket_loop(void *arg) {
 		unsigned char *dbuf;
 		int res;
 
-//		fprintf(stderr, "Loop Attempting to read %zu bytes from %d\n", sizeof(hdr), fd);
+		fprintf(stderr, "Loop Attempting to read %zu bytes from %d\n", sizeof(hdr), fd);
 
 		if ((res = recv(fd, &hdr, sizeof(hdr), MSG_WAITALL)) == -1) {
 			perror("recv");
@@ -319,6 +319,8 @@ client_socket_loop(void *arg) {
 			fprintf(stderr, "Unexpected error receiving data from gotrace control socket.\n");
 			break;
 		}
+
+//		fprintf(stderr, "LOOP NEXT\n");
 
 		if (hdr.magic != GOMOD_DATA_MAGIC) {
 			fprintf(stderr, "Error retrieving gomod function request with unexpected data formatting.\n");
@@ -347,7 +349,7 @@ client_socket_loop(void *arg) {
 	fprintf(stderr, "Loop: read all data\n");
 
 		if (hdr.reqtype == GOMOD_RT_SET_INTERCEPT) {
-			unsigned long iret, *addrp;
+			unsigned long iret, *addrp, addr_new;
 
 			if (hdr.size % sizeof(void *)) {
 				fprintf(stderr, "Error: Received set intercept request with invalid size (%u bytes).\n", hdr.size);
@@ -357,7 +359,7 @@ client_socket_loop(void *arg) {
 
 			fprintf(stderr, "Loop received set intercept request (n=%u).\n", (unsigned int)(hdr.size / sizeof(void *)));
 			addrp = (unsigned long *)dbuf;
-			iret = set_intercept_redirect((void *)*addrp, NULL);
+			iret = set_intercept_redirect((void *)*addrp, &addr_new);
 
 			if (!iret) {
 				fprintf(stderr, "Error: could not create intercept redirection on address %p\n",
@@ -365,6 +367,27 @@ client_socket_loop(void *arg) {
 			} else {
 				fprintf(stderr, "Loop: intercept on %p -> %p\n",
 					(void *)*addrp, (void *)iret);
+				// hdr size stays the same, and of course reqtype too
+				memcpy(dbuf, &addr_new, sizeof(addr_new));
+
+				if ((res = send(fd, &hdr, sizeof(hdr), 0) != sizeof(hdr))) {
+					if (res == -1)
+						perror("send");
+
+					fprintf(stderr, "Unexpected error sending back response header data on gotrace control socket.\n");
+					free(dbuf);
+					break;
+				}
+
+				if ((res = send(fd, dbuf, hdr.size, 0) != hdr.size)) {
+					if (res == -1)
+						perror("send");
+
+					fprintf(stderr, "Unexpected error sending back response body data on gotrace control socket.\n");
+					free(dbuf);
+					break;
+				}
+
 			}
 
 			free(dbuf);
@@ -401,7 +424,6 @@ client_socket_loop(void *arg) {
 					free(sdata);
 					break;
 				}
-
 
 				free(sdata);
 			}

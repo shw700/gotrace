@@ -44,6 +44,12 @@ typedef struct saved_prolog {
 	int refcnt;
 } saved_prolog_t;
 
+typedef struct remote_intercept {
+	void *addr;
+	char *fname;
+	int is_entry;
+} remote_intercept_t;
+
 size_t saved_prolog_nentries = 1024;
 size_t saved_prolog_entries = 0;
 saved_prolog_t *saved_prologs = NULL;
@@ -51,6 +57,10 @@ saved_prolog_t *saved_prologs = NULL;
 size_t saved_ret_prolog_nentries = 64;
 size_t saved_ret_prolog_entries = 0;
 saved_prolog_t *saved_ret_prologs = NULL;
+
+size_t remote_intercept_nentries = 64;
+size_t remote_intercept_entries = 0;
+remote_intercept_t *remote_intercepts = NULL;
 
 long trace_flags = PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACECLONE | PTRACE_O_TRACEVFORK |
 	PTRACE_O_TRACEFORK | PTRACE_O_TRACEEXEC | PTRACE_O_TRACEEXIT; /* PTRACE_O_TRACEVFORKDONE */
@@ -67,6 +77,7 @@ char *excluded_intercepts[] = {
 extern char *read_string_remote(pid_t pid, char *addr, size_t slen);
 
 void *call_remote_func(pid_t pid, unsigned char reqtype, void *data, size_t dsize, size_t *psize);
+int call_remote_intercept(pid_t pid, char **funcnames, unsigned long *addresses, size_t naddr);
 
 void start_listener(void);
 void *gotrace_socket_loop(void *param);
@@ -76,6 +87,8 @@ int set_all_intercepts(pid_t pid);
 int set_intercept(pid_t pid, void *addr);
 int set_ret_intercept(pid_t pid, const char *fname, void *addr, size_t *pidx);
 int is_intercept_excluded(const char *fname);
+
+int save_remote_intercept(pid_t pid, const char *fname, void *addr, int is_entry);
 
 void cleanup(void);
 void handle_int(int signo);
@@ -171,11 +184,14 @@ call_remote_func(pid_t pid, unsigned char reqtype, void *data, size_t dsize, siz
 		return NULL;
 	}
 
+	if (psize)
+		*psize = hdr.size;
+
 	return result;
 }
 
 char *
-call_remote_serializer(const char *name, void *addr) {
+call_remote_serializer(pid_t pid, const char *name, void *addr) {
 	void *result;
 	unsigned long *upval;
 	char reqbuf[128];
@@ -186,9 +202,31 @@ call_remote_serializer(const char *name, void *addr) {
 	upval = (unsigned long *)(reqbuf + strlen(reqbuf) + 1);
 	*upval = (unsigned long)addr;
 	reqsize = ((char *)upval) + sizeof(void *) - ((char *)reqbuf);
-	result = call_remote_func(-1, GOMOD_RT_SERIALIZE_DATA, reqbuf, reqsize, &outsize);
+	result = call_remote_func(pid, GOMOD_RT_SERIALIZE_DATA, reqbuf, reqsize, &outsize);
 
 	return result;
+}
+
+int
+call_remote_intercept(pid_t pid, char **funcnames, unsigned long *addresses, size_t naddr) {
+	void *result;
+	unsigned long *taddr;
+	size_t outsize;
+
+	result = call_remote_func(pid, GOMOD_RT_SET_INTERCEPT, addresses, naddr*sizeof(unsigned long), &outsize);
+	taddr = (unsigned long *)result;
+
+	if (!result)
+		fprintf(stderr, "XXX: call remote intercept returned NULL\n");
+	else {
+		fprintf(stderr, "XXX: call remote intercept: result = %p / %zu: %p\n", result, outsize, (void *)*taddr);
+
+		if (save_remote_intercept(pid, *funcnames, (void *)*taddr, 1) < 0) {
+			fprintf(stderr, "Unknown error occurred setting remote function intercept\n");
+		}
+	}
+
+	return 0;
 }
 
 void *
@@ -210,12 +248,19 @@ gotrace_socket_loop(void *param) {
 			exit(EXIT_FAILURE);
 		}
 
-		fprintf(stderr, "ACCEPTED!\n");
+		fprintf(stderr, "XXX: ACCEPTED!\n");
 		test_fd = cfd;
 
-		fprintf(stderr, "Sleeping...\n");
+
+/*		char *fname = "main.GetConnection";
+		unsigned long readdr = 0x0000000000402d60;
+		int res = call_remote_intercept(-1, &fname, &readdr, 1);
+		fprintf(stderr, "XXX: int res = %d\n", res);*/
+
+
+		fprintf(stderr, "XXX: Sleeping...\n");
 		sleep(2);
-		fprintf(stderr, "End sleep.\n");
+		fprintf(stderr, "XXX: End sleep.\n");
 		break;
 	}
 
@@ -256,7 +301,6 @@ start_listener(void) {
 
 	return;
 }
-
 
 int
 is_intercept_excluded(const char *fname) {
@@ -362,6 +406,21 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 	// Hmm
 	hot_pc = (void *)(regs.rip - 1);
 	hot_sp = (void *)(regs.rsp + sizeof(void *));
+
+	// Check for remote intercept first.
+	for (i = 0; i < remote_intercept_entries; i++) {
+		if (remote_intercepts[i].addr == hot_pc) {
+			symname = remote_intercepts[i].fname;
+			fprintf(stderr, "XXX: OOOOOOOOOOOOH YEAH: %s\n", symname);
+			lts = lt_symbol_bind(cfg.sh, hot_pc, symname);
+			lt_tsd_t *tsdx = thread_get_tsd(pid, 1);
+
+			if (!remote_intercepts[i].is_entry)
+				ret = sym_exit(symname, lts, "from", "to", pid, &regs, &regs, tsdx);
+			else
+				ret = sym_entry(symname, lts, "from", "to", pid, &regs, tsdx);
+		}
+	}
 
 	for (i = 0; i < saved_prolog_entries; i++) {
 		if (saved_prologs[i].addr == hot_pc)
@@ -595,10 +654,6 @@ dump_intercepts(void) {
 	return;
 }
 
-int set_intercept_redirect(pid_t pid, void *addr) {
-	return 0;
-}
-
 int
 set_intercept(pid_t pid, void *addr) {
 	long saved_prolog = 0, mod_prolog;
@@ -635,6 +690,36 @@ set_intercept(pid_t pid, void *addr) {
 	saved_prologs[saved_prolog_entries].addr = addr;
 	saved_prologs[saved_prolog_entries].saved_prolog = saved_prolog;
 	saved_prolog_entries++;
+	return 0;
+}
+
+int
+save_remote_intercept(pid_t pid, const char *fname, void *addr, int is_entry) {
+	size_t i;
+
+	if (remote_intercept_entries == remote_intercept_nentries) {
+		remote_intercept_t *new_intercepts;
+
+		if (!(new_intercepts = realloc(remote_intercepts, (remote_intercept_nentries * 2 * sizeof(*remote_intercepts))))) {
+			perror("realloc");
+			return -1;
+		}
+
+		remote_intercept_nentries *= 2;
+		remote_intercepts = new_intercepts;
+	}
+
+	for (i = 0; i < remote_intercept_entries; i++) {
+		if (remote_intercepts[i].addr == addr) {
+			return 0;
+		}
+	}
+
+	remote_intercepts[remote_intercept_entries].addr = addr;
+	remote_intercepts[remote_intercept_entries].fname = strdup(fname);
+	remote_intercepts[remote_intercept_entries].is_entry = is_entry;
+	remote_intercept_entries++;
+
 	return 0;
 }
 
@@ -709,6 +794,14 @@ trace_init(void) {
 	}
 
 	memset(saved_ret_prologs, 0, saved_ret_prolog_nentries * sizeof(*saved_prologs));
+
+	if (!(remote_intercepts = malloc(remote_intercept_nentries * sizeof(*remote_intercepts)))) {
+		perror("malloc");
+		return -1;
+	}
+
+	memset(remote_intercepts, 0, remote_intercept_nentries * sizeof(*remote_intercepts));
+
 	return 0;
 }
 
