@@ -93,6 +93,20 @@ int save_remote_intercept(pid_t pid, const char *fname, void *addr, int is_entry
 void cleanup(void);
 void handle_int(int signo);
 
+void perror_pid(const char *msg, pid_t pid);
+
+
+void
+perror_pid(const char *msg, pid_t pid) {
+	char outbuf[1024];
+
+	memset(outbuf, 0, sizeof(outbuf));
+	snprintf(outbuf, sizeof(outbuf), "%sError in %s (%d)%s",
+		BOLDRED, msg, pid, RESET);
+	perror(outbuf);
+	return;
+}
+
 
 void
 cleanup(void) {
@@ -136,7 +150,7 @@ call_remote_func(pid_t pid, unsigned char reqtype, void *data, size_t dsize, siz
 
 	if ((res = send(fd, &hdr, sizeof(hdr), 0)) != sizeof(hdr)) {
 		if (res == -1)
-			perror("send");
+			perror_pid("send", pid);
 
 		PRINT_ERROR("%s", "Error encountered in calling gomod function.\n");
 		return NULL;
@@ -144,7 +158,7 @@ call_remote_func(pid_t pid, unsigned char reqtype, void *data, size_t dsize, siz
 
 	if ((res = send(fd, data, dsize, 0)) != dsize) {
 		if (res == -1)
-			perror("send");
+			perror_pid("send", pid);
 
 		PRINT_ERROR("%s", "Error encountered in calling gomod function.\n");
 		return NULL;
@@ -154,7 +168,7 @@ call_remote_func(pid_t pid, unsigned char reqtype, void *data, size_t dsize, siz
 
 	if ((res = recv(fd, &hdr, sizeof(hdr), MSG_WAITALL)) != sizeof(hdr)) {
 		if (res == -1)
-			perror("recv");
+			perror_pid("recv", pid);
 
 		PRINT_ERROR("%s", "Error encountered in retrieving remote result header of gomod function.\n");
 		return NULL;
@@ -171,13 +185,13 @@ call_remote_func(pid_t pid, unsigned char reqtype, void *data, size_t dsize, siz
 	PRINT_ERROR("GO MOD RETURN SIZE = %u bytes\n", hdr.size);
 
 	if (!(result = malloc(hdr.size))) {
-		perror("malloc");
+		perror_pid("malloc", pid);
 		return NULL;
 	}
 
 	if ((res = recv(fd, result, hdr.size, MSG_WAITALL)) != hdr.size) {
 		if (res == -1)
-			perror("recv");
+			perror_pid("recv", pid);
 
 		PRINT_ERROR("%s", "Error encountered in retrieving remote result body of gomod function.\n");
 		free(result);
@@ -244,7 +258,7 @@ gotrace_socket_loop(void *param) {
 		fprintf(stderr, "Listening...\n");
 
 		if ((cfd = accept(lfd, (struct sockaddr *)&s_un, &slen)) == -1) {
-			perror("accept");
+			perror_pid("accept", lfd);
 			exit(EXIT_FAILURE);
 		}
 
@@ -274,7 +288,7 @@ start_listener(void) {
 	int fd;
 
 	if ((fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1) {
-		perror("socket");
+		perror_pid("socket", 0);
 		exit(EXIT_FAILURE);
 	}
 
@@ -284,17 +298,17 @@ start_listener(void) {
 	ssize = offsetof(struct sockaddr_un, sun_path) + strlen(s_un.sun_path);
 
 	if (bind(fd, (struct sockaddr *)&s_un, ssize) == -1) {
-		perror("bind");
+		perror_pid("bind", fd);
 		exit(EXIT_FAILURE);
 	}
 
 	if (listen(fd, 10) == -1) {
-		perror("listen");
+		perror_pid("listen", fd);
 		exit(EXIT_FAILURE);
 	}
 
 	if (pthread_create(&ptid, NULL, gotrace_socket_loop, (void *)((uintptr_t)fd)) != 0) {
-		perror("pthread_create");
+		perror_pid("pthread_create", 0);
 		exit(EXIT_FAILURE);
 	}
 
@@ -320,7 +334,7 @@ decode_param(pid_t pid, void *sp, golang_data_type dtype, void *pval) {
 	errno = 0;
 	val = ptrace(PTRACE_PEEKDATA, pid, sp, 0);
 	if (errno != 0) {
-		perror("ptrace(PTRACE_PEEKDATA)");
+		perror_pid("ptrace(PTRACE_PEEKDATA)", pid);
 		return NULL;
 	}
 
@@ -334,7 +348,7 @@ decode_param(pid_t pid, void *sp, golang_data_type dtype, void *pval) {
 		errno = 0;
 		slen = ptrace(PTRACE_PEEKDATA, pid, sp+sizeof(void *), 0);
 		if (errno != 0) {
-			perror("ptrace(PTRACE_PEEKDATA)");
+			perror_pid("ptrace(PTRACE_PEEKDATA)", pid);
 			return NULL;
 		}
 
@@ -400,7 +414,7 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 			if (is_pid_new(pid)) {
 
 				if (ptrace(PTRACE_SETOPTIONS, pid, NULL, trace_flags) < 0) {
-					perror("ptrace(PTRACE_SETOPTIONS)");
+					perror_pid("ptrace(PTRACE_SETOPTIONS)", pid);
 					exit(EXIT_FAILURE);
 				}
 
@@ -412,7 +426,7 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 
 				// We will return into a loop that will perform this action for us.
 /*				if (ptrace(PTRACE_CONT, pid, NULL, 0) < 0) {
-					perror("ptrace(PTRACE_CONT) [4]");
+					perror_pid("ptrace(PTRACE_CONT) [4]", pid);
 					exit(EXIT_FAILURE);
 				} */
 
@@ -427,7 +441,7 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 	DEBUG_PRINT(2, "Handling trace trap!\n");
 
 	if (ptrace(PTRACE_GETREGS, pid, 0, &regs) < 0) {
-		perror("ptrace(PTRACE_GETREGS)");
+		perror_pid("ptrace(PTRACE_GETREGS)", pid);
 		return -1;
 	}
 
@@ -475,7 +489,7 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 		errno = 0;
 		ret_addr = ptrace(PTRACE_PEEKTEXT, pid, regs.rsp, 0);
 		if (errno != 0) {
-			perror("ptrace(PTRACE_PEEKTEXT)");
+			perror_pid("ptrace(PTRACE_PEEKTEXT)", pid);
 			return -1;
 		}
 
@@ -506,14 +520,14 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 		retrace = ptrace(PTRACE_POKETEXT, pid, saved_prologs[i].addr, saved_prologs[i].saved_prolog);
 
 	if (retrace < 0) {
-		perror("ptrace(PTRACE_POKETEXT)");
+		perror_pid("ptrace(PTRACE_POKETEXT)", pid);
 		return -1;
 	}
 
 	regs.rip = (long)hot_pc;
 
 	if (ptrace(PTRACE_SETREGS, pid, 0, &regs) < 0) {
-		perror("ptrace(PTRACE_SETREGS)");
+		perror_pid("ptrace(PTRACE_SETREGS)", pid);
 		return -1;
 	}
 
@@ -534,14 +548,14 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 	}
 
 	if (ptrace(PTRACE_SINGLESTEP, pid, 0, 0) < 0) {
-		perror("ptrace(PTRACE_SINGLESTEP)");
+		perror_pid("ptrace(PTRACE_SINGLESTEP)", pid);
 		return -1;
 	}
 
 	int wait_status = 0;
 
 	if (waitpid(pid, &wait_status, 0) < 0) {
-		perror("waitpid");
+		perror_pid("waitpid", pid);
 		return -1;
 	}
 
@@ -561,7 +575,7 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 	*((unsigned char *)&retrace) = 0xcc;
 
 	if (ptrace(PTRACE_POKETEXT, pid, ret_addr, retrace) < 0) {
-		perror("ptrace(PTRACE_POKETEXT)");
+		perror_pid("ptrace(PTRACE_POKETEXT)", pid);
 		return -1;
 	}
 
@@ -575,17 +589,17 @@ analyze_clone_call(pid_t pid, pid_t cpid) {
 	struct user_regs_struct regs;
 
 	if (ptrace(PTRACE_SYSCALL, pid, NULL, NULL) < 0) {
-		perror("ptrace(PTRACE_SYSCALL)");
+		perror_pid("ptrace(PTRACE_SYSCALL)", pid);
 		return -1;
 	}
 
 	if (waitpid(pid, &ws, 0) < 0) {
-		perror("waitpid");
+		perror_pid("waitpid", pid);
 		return -1;
 	}
 
 	if (ptrace(PTRACE_GETREGS, pid, 0, &regs) < 0) {
-		perror("ptrace(PTRACE_GETREGS)");
+		perror_pid("ptrace(PTRACE_GETREGS)", pid);
 		return -1;
 	}
 
@@ -638,7 +652,7 @@ dump_wait_state(pid_t pid, int status, int force) {
 
 		// PTRACE_PEEKSIGINFO
 		if (ptrace(pid, PTRACE_GETSIGINFO, NULL, &si) < 0) {
-			perror("ptrace(PTRACE_GETSIGINFO)");
+			perror_pid("ptrace(PTRACE_GETSIGINFO)", pid);
 		} else {
 			DEBUG_PRINT(dbg_level, "si_code=%d, si_pid=%d, si_uid=%d, si_status=%d, si_addr=%p, "
 				"si_call_addr=%p, si_syscall=%d\n",
@@ -675,7 +689,7 @@ dump_wait_state(pid_t pid, int status, int force) {
 		pid_t npid;
 
 		if (ptrace(PTRACE_GETEVENTMSG, pid, NULL, &msg) < 0) {
-			perror("ptrace(PTRACE_GETEVENTMSG)");
+			perror_pid("ptrace(PTRACE_GETEVENTMSG)", pid);
 			exit(EXIT_FAILURE);
 		}
 
@@ -694,7 +708,7 @@ dump_wait_state(pid_t pid, int status, int force) {
 			} else {
 				int w;
 				if (waitpid(npid, &w, 0) < 0) {
-					perror("waitpid");
+					perror_pid("waitpid", npid);
 					exit(EXIT_FAILURE);
 				}
 
@@ -707,7 +721,7 @@ dump_wait_state(pid_t pid, int status, int force) {
 					PRINT_ERROR("Warning: traced pid %d was stopped for unexpected reason.\n", npid);
 
 				if (ptrace(PTRACE_CONT, npid, NULL, 0) < 0) {
-					perror("ptrace(PTRACE_CONT) [6]");
+					perror_pid("ptrace(PTRACE_CONT) [6]", npid);
 					exit(EXIT_FAILURE);
 				}
 
@@ -753,7 +767,7 @@ set_intercept(pid_t pid, void *addr) {
 		saved_prolog_t *new_prologs;
 
 		if (!(new_prologs = realloc(saved_prologs, (saved_prolog_nentries * 2 * sizeof(saved_prolog_t))))) {
-			perror("realloc");
+			perror_pid("realloc", pid);
 			return -1;
 		}
 
@@ -764,7 +778,7 @@ set_intercept(pid_t pid, void *addr) {
 	errno = 0;
 	saved_prolog = ptrace(PTRACE_PEEKTEXT, pid, addr, 0);
 	if (errno != 0) {
-		perror("ptrace(PTRACE_PEEKTEXT)");
+		perror_pid("ptrace(PTRACE_PEEKTEXT)", pid);
 		return -1;
 	}
 
@@ -773,7 +787,7 @@ set_intercept(pid_t pid, void *addr) {
 	*tptr = 0xcc;
 
 	if (ptrace(PTRACE_POKETEXT, pid, addr, mod_prolog) < 0) {
-		perror("ptrace(PTRACE_POKETEXT)");
+		perror_pid("ptrace(PTRACE_POKETEXT)", pid);
 		return -1;
 	}
 
@@ -791,7 +805,7 @@ save_remote_intercept(pid_t pid, const char *fname, void *addr, int is_entry) {
 		remote_intercept_t *new_intercepts;
 
 		if (!(new_intercepts = realloc(remote_intercepts, (remote_intercept_nentries * 2 * sizeof(*remote_intercepts))))) {
-			perror("realloc");
+			perror_pid("realloc", pid);
 			return -1;
 		}
 
@@ -825,7 +839,7 @@ set_ret_intercept(pid_t pid, const char *fname, void *addr, size_t *pidx) {
 		saved_prolog_t *new_prologs;
 
 		if (!(new_prologs = realloc(saved_ret_prologs, (saved_ret_prolog_nentries * 2 * sizeof(saved_prolog_t))))) {
-			perror("realloc");
+			perror_pid("realloc", pid);
 			return -1;
 		}
 
@@ -845,7 +859,7 @@ set_ret_intercept(pid_t pid, const char *fname, void *addr, size_t *pidx) {
 	errno = 0;
 	saved_ret_prolog = ptrace(PTRACE_PEEKTEXT, pid, addr, 0);
 	if (errno != 0) {
-		perror("ptrace(PTRACE_PEEKTEXT)");
+		perror_pid("ptrace(PTRACE_PEEKTEXT)", pid);
 		return -1;
 	}
 
@@ -854,7 +868,7 @@ set_ret_intercept(pid_t pid, const char *fname, void *addr, size_t *pidx) {
 	*tptr = 0xcc;
 
 	if (ptrace(PTRACE_POKETEXT, pid, addr, mod_prolog) < 0) {
-		perror("ptrace(PTRACE_POKETEXT)");
+		perror_pid("ptrace(PTRACE_POKETEXT)", pid);
 		return -1;
 	}
 
@@ -872,21 +886,21 @@ set_ret_intercept(pid_t pid, const char *fname, void *addr, size_t *pidx) {
 int
 trace_init(void) {
 	if (!(saved_prologs = malloc(saved_prolog_nentries * sizeof(*saved_prologs)))) {
-		perror("malloc");
+		perror_pid("malloc", 0);
 		return -1;
 	}
 
 	memset(saved_prologs, 0, saved_prolog_nentries * sizeof(*saved_prologs));
 
 	if (!(saved_ret_prologs = malloc(saved_ret_prolog_nentries * sizeof(*saved_prologs)))) {
-		perror("malloc");
+		perror_pid("malloc", 0);
 		return -1;
 	}
 
 	memset(saved_ret_prologs, 0, saved_ret_prolog_nentries * sizeof(*saved_prologs));
 
 	if (!(remote_intercepts = malloc(remote_intercept_nentries * sizeof(*remote_intercepts)))) {
-		perror("malloc");
+		perror_pid("malloc", 0);
 		return -1;
 	}
 
@@ -899,12 +913,12 @@ int
 child_trace_program(const char *progname, char * const *args) {
 
 	if (prctl(PR_SET_PTRACER, getppid()) < 0) {
-		perror("prctl(PR_SET_PTRACER)");
+		perror_pid("prctl(PR_SET_PTRACER)", 0);
 //		exit(EXIT_FAILURE);
 	}
 
 	if (ptrace(PTRACE_TRACEME, NULL, 0, 0) < 0) {
-		perror("ptrace(PTRACE_TRACEME)");
+		perror_pid("ptrace(PTRACE_TRACEME)", 0);
 		exit(EXIT_FAILURE);
 	}
 
@@ -915,7 +929,7 @@ child_trace_program(const char *progname, char * const *args) {
 //	fprintf(stderr, "socket path: [%s]\n", gotrace_socket_path);
 	setenv(GOTRACE_SOCKET_ENV, gotrace_socket_path, 1);
 	execv(progname, args);
-	perror("execv");
+	perror_pid("execv", 0);
 	exit(EXIT_FAILURE);
 }
 
@@ -960,7 +974,7 @@ read_bytes_remote(pid_t pid, char *addr, size_t slen) {
 
 	if (slen) {
 		if (!(result = malloc(slen+1))) {
-			perror("malloc");
+			perror_pid("malloc", pid);
 			return NULL;
 		}
 
@@ -975,7 +989,7 @@ read_bytes_remote(pid_t pid, char *addr, size_t slen) {
 
 		val = ptrace(PTRACE_PEEKDATA, pid, raddr, 0);
 		if (errno != 0) {
-			perror("ptrace(PTRACE_PEEKDATA)");
+			perror_pid("ptrace(PTRACE_PEEKDATA)", pid);
 			return NULL;
 		}
 
@@ -1039,7 +1053,7 @@ trace_program(const char *progname, char * const *args) {
 			exit(EXIT_FAILURE);
 			break;
 		case -1:
-			perror("fork");
+			perror_pid("fork", 0);
 			exit(EXIT_FAILURE);
 			break;
 		default:
@@ -1049,17 +1063,17 @@ trace_program(const char *progname, char * const *args) {
 	printf("In parent: sleeping\n");
 
 /*	if (ptrace(PTRACE_ATTACH, pid, NULL, NULL) < 0) {
-		perror("ptrace(PTRACE_ATTACH)");
+		perror_pid("ptrace(PTRACE_ATTACH)", pid);
 		exit(EXIT_FAILURE);
 	} */
 
 	if (waitpid(pid, &wait_status, 0) < 0) {
-		perror("waitpid");
+		perror_pid("waitpid", pid);
 		exit(EXIT_FAILURE);
 	}
 
 	if (ptrace(PTRACE_SETOPTIONS, pid, NULL, trace_flags) < 0) {
-		perror("ptrace(PTRACE_SETOPTIONS)111");
+		perror_pid("ptrace(PTRACE_SETOPTIONS)", pid);
 		exit(EXIT_FAILURE);
 	}
 	dump_wait_state(pid, wait_status, 0);
@@ -1067,12 +1081,12 @@ trace_program(const char *progname, char * const *args) {
 	printf("Parent attached\n");
 
 	if (ptrace(PTRACE_CONT, pid, NULL, 0) < 0) {
-		perror("ptrace(PTRACE_CONT) [3]");
+		perror_pid("ptrace(PTRACE_CONT) [3]", pid);
 		exit(EXIT_FAILURE);
 	}
 
 	if (waitpid(pid, &wait_status, 0) < 0) {
-		perror("waitpid");
+		perror_pid("waitpid", pid);
 		exit(EXIT_FAILURE);
 	}
 	dump_wait_state(pid, wait_status, 0);
@@ -1092,7 +1106,7 @@ trace_program(const char *progname, char * const *args) {
 	printf("Running loop...\n");
 
 	if (ptrace(PTRACE_CONT, pid, NULL, 0) < 0) {
-		perror("ptrace(PTRACE_CONT) [1]");
+		perror_pid("ptrace(PTRACE_CONT) [1]", pid);
 		exit(EXIT_FAILURE);
 	}
 
@@ -1100,7 +1114,7 @@ trace_program(const char *progname, char * const *args) {
 		pid_t cpid;
 
 		if ((cpid = waitpid(-1, &wait_status, 0)) < 0) {
-			perror("waitpid");
+			perror_pid("waitpid", -1);
 			exit(EXIT_FAILURE);
 		}
 
@@ -1108,12 +1122,12 @@ trace_program(const char *progname, char * const *args) {
 			PRINT_ERROR("Traced PID/TID (%d) is our own code; detaching.\n", cpid);
 
 			if (ptrace(PTRACE_SETOPTIONS, cpid, NULL, 0) < 0) {
-				perror("ptrace(~PTRACE_SETOPTIONS)");
+				perror_pid("ptrace(~PTRACE_SETOPTIONS)", cpid);
 				exit(EXIT_FAILURE);
 			}
 
 			if (ptrace(PTRACE_CONT, cpid, NULL, 0) < 0) {
-				perror("ptrace(PTRACE_CONT) [5]");
+				perror_pid("ptrace(PTRACE_CONT) [5]", cpid);
 				exit(EXIT_FAILURE);
 			}
 
@@ -1132,9 +1146,9 @@ trace_program(const char *progname, char * const *args) {
 				static int scnt = 0;
 
 				if (ptrace(PTRACE_GETSIGINFO, cpid, 0, &si) < 0)
-					perror("ptrace(PTRACE_GETSIGINFO)");
+					perror_pid("ptrace(PTRACE_GETSIGINFO)", cpid);
 				else if (ptrace(PTRACE_GETREGS, cpid, 0, &regs) < 0) {
-					perror("ptrace(PTRACE_GETREGS)");
+					perror_pid("ptrace(PTRACE_GETREGS)", cpid);
 					fprintf(stderr, "SIGSEGV occurred at address: %p\n", si.si_addr);
 				} else {
 					fprintf(stderr, "SIGSEGV occurred at address %p / PC %p\n",
@@ -1154,7 +1168,7 @@ trace_program(const char *progname, char * const *args) {
 		}
 
 		if (ptrace(PTRACE_CONT, cpid, NULL, 0) < 0) {
-			perror("ptrace(PTRACE_CONT) [2]");
+			perror_pid("ptrace(PTRACE_CONT) [2]", cpid);
 			exit(EXIT_FAILURE);
 		}
 
@@ -1205,7 +1219,7 @@ main(int argc, char *argv[]) {
 	atexit(cleanup);
 
 	if (signal(SIGINT, handle_int) == SIG_ERR)
-		perror("signal(SIGINT,...)");
+		perror_pid("signal(SIGINT,...)", 0);
 
 	trace_program(progname, &argv[2]);
 	exit(-1);

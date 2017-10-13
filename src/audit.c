@@ -211,12 +211,13 @@ int sym_exit(const char *symname, void *ptr, char *lib_from, char *lib_to, pid_t
 			 struct user_regs_struct *inregs, struct user_regs_struct *outregs, lt_tsd_t *tsd)
 {
 	int argret = -1;
-	char *argbuf, *argdbuf = "";
+	char *argbuf = NULL, *argdbuf = "";
 	struct timeval tv;
 	struct lt_symbol *sym = NULL;
 	int collapsed = 0, is_silent = 0;
 
 	if (!ptr) {
+		argbuf = " ";
 		lt_out_exit(cfg.sh, &tv, target,
 			tsd->indent_depth, collapsed,
 			symname, lib_to, lib_from,
