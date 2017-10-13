@@ -14,14 +14,14 @@
 
 #include "gomod_print/gomod_print.h"
 
-//#include "zydis/include/Zydis/Decoder.h
+#include <zydis/include/Zydis/Zydis.h>
 
 
 extern void *___dlopen_stub;
 int _gotrace_socket_fd = -1;
 
 void *client_socket_loop(void *arg);
-int set_intercept_redirect(pid_t pid, void *addr);
+unsigned long set_intercept_redirect(void *addr, unsigned long *ptrapaddr);
 int map_stub(void);
 
 char *call_golang_func_by_name(const char *fname, void *param);
@@ -208,20 +208,88 @@ call_data_serializer(const char *dtype, void *addr) {
 	return result;
 }
 
-
-int set_intercept_redirect(pid_t pid, void *addr) {
-/*	ZydisDecoder decoder;
-	uint64_t ip = 0x007FFFFFFF400000;
-	uint8_t *iptr = (uint8_t *)&addr;
+size_t
+instruction_bytes_needed(void *addr, size_t minsize) {
+	ZydisDecoder decoder;
 	ZydisDecodedInstruction instruction;
+	uint64_t rip = (uint64_t)addr;
+	uint8_t *idata = (uint8_t *)addr;
+	size_t total = 0, len;
 
-	ZydisDecoderInit( &decoder, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_ADDRESS_WIDTH_64);
-        
-	if (ZYDIS_SUCCESS(ZydisDecoderDecodeBuffer(&decoder, iptr, 16, ip, &instruction))) {
-		fprintf(stderr, "Decoded instruction length: %u bytes\n", instruction.length);
+	len = minsize + 16;
+
+	ZydisDecoderInit(&decoder, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_ADDRESS_WIDTH_64);
+
+	while (total < minsize) {
+
+		if (!ZYDIS_SUCCESS(ZydisDecoderDecodeBuffer(&decoder, idata, len, rip, &instruction))) {
+			fprintf(stderr, "Error decoding instruction at %p\n", (void *)rip);
+			return 0;
+		}
+
+                idata += instruction.length;
+                len -= instruction.length;
+                rip += instruction.length;
+                total += instruction.length;
+        }
+
+	return total;
+}
+
+void *
+get_landing_pad(size_t size) {
+	void *buf;
+
+	if ((buf = mmap(NULL, 4096, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_ANONYMOUS|MAP_PRIVATE, 0, 0)) == MAP_FAILED) {
+		perror("mmap");
+		return NULL;
 	}
-*/
-	return 0;
+
+	return buf;
+}
+
+unsigned long
+set_intercept_redirect(void *addr, unsigned long *ptrapaddr) {
+	unsigned char *trampoline;
+	unsigned long uaddr;
+	unsigned long addr_base, page_mask, page_size = 4096;
+	size_t to_copy;
+
+	page_mask = ~(page_size - 1);
+	addr_base = (unsigned long)addr & page_mask;
+
+	if ((mprotect((void *)addr_base, page_size, PROT_READ|PROT_WRITE|PROT_EXEC)) == -1) {
+		perror("mprotect");
+		return 0;
+	}
+
+	unsigned char tramp_data[] = { 0x48, 0xb8,
+		0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11, 0xff, 0xd0 };
+	const unsigned char trap_ret[] = { 0xcc, 0xc3 };
+	size_t to_allocate;
+
+	if (!(to_copy = instruction_bytes_needed(addr, sizeof(tramp_data))))
+		return 0;
+
+	to_allocate = to_copy + sizeof(trap_ret);
+
+	if (!(trampoline = get_landing_pad(to_allocate)))
+		return 0;
+
+//	fprintf(stderr, "XXX to copy went from %zu to %zu\n", sizeof(tramp_data), to_copy);
+	uaddr = (unsigned long)trampoline;
+	memcpy(tramp_data+2, &uaddr, sizeof(uaddr));
+
+	memcpy(trampoline, addr, to_copy);
+	memcpy(trampoline+to_copy, &trap_ret, sizeof(trap_ret));
+	memset(addr, 0x90, to_copy);
+	memcpy(addr, tramp_data, sizeof(tramp_data));
+
+	if (ptrapaddr) {
+		*ptrapaddr = uaddr + sizeof(tramp_data) + 1;
+	}
+
+	return (unsigned long)trampoline;
 }
 
 static int client_loop_initialized = 0;
@@ -279,6 +347,8 @@ client_socket_loop(void *arg) {
 	fprintf(stderr, "Loop: read all data\n");
 
 		if (hdr.reqtype == GOMOD_RT_SET_INTERCEPT) {
+			unsigned long iret, *addrp;
+
 			if (hdr.size % sizeof(void *)) {
 				fprintf(stderr, "Error: Received set intercept request with invalid size (%u bytes).\n", hdr.size);
 				free(dbuf);
@@ -286,6 +356,18 @@ client_socket_loop(void *arg) {
 			}
 
 			fprintf(stderr, "Loop received set intercept request (n=%u).\n", (unsigned int)(hdr.size / sizeof(void *)));
+			addrp = (unsigned long *)dbuf;
+			iret = set_intercept_redirect((void *)*addrp, NULL);
+
+			if (!iret) {
+				fprintf(stderr, "Error: could not create intercept redirection on address %p\n",
+					(void *)*addrp);
+			} else {
+				fprintf(stderr, "Loop: intercept on %p -> %p\n",
+					(void *)*addrp, (void *)iret);
+			}
+
+			free(dbuf);
 		} else if (hdr.reqtype == GOMOD_RT_SERIALIZE_DATA) {
 			unsigned long *fdata;
 			char *sdata, *fname = (char *)dbuf;
@@ -349,6 +431,12 @@ void _gomod_init(void)
 	fprintf(stderr, "Loop (%lu)\n", syscall(SYS_gettid));
 //	char *rx = call_golang_func_str((void *)0x000000000402100, (void *)0xc0debabe);
 //	fprintf(stderr, "Loop result heh = %p\n", rx);
+
+/*	sleep(1);
+	fprintf(stderr, "XXX trying\n");
+	unsigned long taddr;
+	unsigned long iret = set_intercept_redirect((void *)0x0000000000402d60, &taddr);
+	fprintf(stderr, "XXX: iret = %lx / trapping at %lx\n", iret, taddr);*/
 
 	if (!(gotrace_socket_path = getenv(GOTRACE_SOCKET_ENV))) {
 		fprintf(stderr, "Error: could not find gotrace socket path in environment!\n");

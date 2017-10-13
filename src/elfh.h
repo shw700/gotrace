@@ -1,3 +1,6 @@
+#ifndef ELFH_H
+#define ELFH_H
+
 #include <link.h>
 #include <elf.h>
 
@@ -34,3 +37,5 @@ void add_address_mapping(void *symaddr, size_t size, const char *name);
 void remove_address_mapping(void *symaddr, size_t size, const char *hint, int null_ok);
 
 char *resolve_sym(void *addr, int exact, char *buf, size_t buflen, const char **filename);
+
+#endif

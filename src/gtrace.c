@@ -20,6 +20,8 @@
 #include "elfh.h"
 #include "args.h"
 
+#include <zydis/include/Zydis/Zydis.h>
+
 
 #define DEBUG_LEVEL	0
 
@@ -58,37 +60,8 @@ struct lt_config_audit cfg;
 char gotrace_socket_path[128];
 
 char *excluded_intercepts[] = {
-//	"runtime.atomicstorep",
-//	"runtime.(*waitq).dequeue",
-//	"runtime.mallocgc",
-//	"runtime.newobject",
-//	"runtime.heapBitsSetType",
-//	"runtime.heapBitsForSpan",
 //	"runtime.(*mcache).refill",
-
-//	"runtime.chanrecv",
-//	"runtime.chanrecv1",
-
-//	"runtime.(*mcentral).cacheSpan",
-
-//	"runtime.bgsweep",
-//	"runtime.chansend",
-//	"runtime.chansend1",
-//	"runtime.forcegchelper",
-//	"runtime.futexwakeup",
-//	"runtime.gopark",
-//	"runtime.goready",
-//	"runtime.lock",
-//	"runtime.makechan",
-//	"runtime.mcommoninit",
-//	"runtime.netpollinited",
-//	"runtime.notesleep",
-//	"runtime.notewakeup",
-//	"runtime.ready",
-//	"runtime.runfinq",
-//	"runtime.send",
-//	"runtime.stopTheWorld",
-//	"runtime.unlock"
+	"main.GetConnection"
 };
 
 extern char *read_string_remote(pid_t pid, char *addr, size_t slen);
@@ -797,6 +770,79 @@ set_all_intercepts(pid_t pid) {
 	return 0;
 }
 
+char *
+read_bytes_remote(pid_t pid, char *addr, size_t slen) {
+	char *result, *raddr = addr;
+	size_t nread = 0;
+
+	if (slen) {
+		if (!(result = malloc(slen+1))) {
+			perror("malloc");
+			return NULL;
+		}
+
+		memset(result, 0, slen+1);
+	}
+
+	while (nread < slen) {
+		size_t maxwrite;
+		long val;
+
+		errno = 0;
+
+		val = ptrace(PTRACE_PEEKDATA, pid, raddr, 0);
+		if (errno != 0) {
+			perror("ptrace(PTRACE_PEEKDATA)");
+			return NULL;
+		}
+
+		maxwrite = slen - nread;
+		if (maxwrite > sizeof(long))
+			maxwrite = sizeof(long);
+
+		memcpy(&result[nread], &val, maxwrite);
+		nread += maxwrite;
+		raddr += maxwrite;
+	}
+
+	return result;
+}
+
+void
+print_instruction(pid_t pid, void *addr, size_t len) {
+	ZydisFormatter formatter;
+	ZydisDecoder decoder;
+	ZydisDecodedInstruction instruction;
+	void *rdata;
+	uint64_t rip = (uint64_t)addr;
+	uint8_t *idata;
+
+	if (!(rdata = read_bytes_remote(pid, addr, len))) {
+		fprintf(stderr, "Error: could not print instruction at %p\n", addr);
+		return;
+	}
+
+	idata = (uint8_t *)rdata;
+
+	ZydisDecoderInit(&decoder, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_ADDRESS_WIDTH_64);
+	ZydisFormatterInit(&formatter, ZYDIS_FORMATTER_STYLE_INTEL);
+
+	while (ZYDIS_SUCCESS(ZydisDecoderDecodeBuffer(&decoder, idata, len, rip, &instruction)))
+	{
+		char buffer[256];
+
+		ZydisFormatterFormatInstruction(&formatter, &instruction, buffer, sizeof(buffer));
+		fprintf(stderr, "Instruction: %p [%s]\n", (void *)rip, buffer);
+		idata += instruction.length;
+		len -= instruction.length;
+		rip += instruction.length;
+		break;
+	}
+
+	free(rdata);
+	return;
+}
+
 int
 trace_program(const char *progname, char * const *args) {
 	pid_t pid;
@@ -910,6 +956,7 @@ trace_program(const char *progname, char * const *args) {
 				} else {
 					fprintf(stderr, "SIGSEGV occurred at address %p / PC %p\n",
 						si.si_addr, (void *)regs.rip);
+					print_instruction(cpid, (void *)regs.rip, 16);
 				}
 
 				if (scnt++ > 5)

@@ -119,6 +119,7 @@ func errors.New(text string) error
 // Networking
 //func runtime.netpoll(block bool) *g
 func runtime.netpoll(block bool) g
+func net.IP.IsLoopback() bool
 
 func runtime/internal/atomic.Load(ptr *uint32) uint32
 func runtime.memmove(to *any, frm *any, length uintptr)

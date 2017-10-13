@@ -16,11 +16,12 @@
 #  along with the latrace (file COPYING).  If not, see 
 #  <http://www.gnu.org/licenses/>.
 
+ZYDIS_LIB=./zydis/build/libZydis.a
 
 GOTRACE_BIN=gotrace
 GOTRACE_LDFLAGS=$(LDFLAGS) -Wl,--no-as-needed -Wl,--export-dynamic
 #gcc -ggdb -O0 -Wall -D_GNU_SOURCE -Wl,--export-dynamic
-GOTRACE_LIBS=$(LIBS) $(LEXLIB) -ldl -lelf -lpthread
+GOTRACE_LIBS=$(LIBS) $(LEXLIB) -ldl -lelf -lpthread $(ZYDIS_LIB)
 
 GOTRACE_OBJS=\
 	src/gtrace.o \
@@ -34,6 +35,7 @@ GOTRACE_OBJS=\
 	src/args-flex.o \
 	src/args.o \
 	src/thread.o \
+	src/serializer.o \
 	src/sysdeps/$(CONFIG_SYSDEP_DIR)/stack.o
 
 OBJS+=$(GOTRACE_OBJS) $(GOMOD_OBJS)
@@ -51,8 +53,7 @@ $(GOTRACE_BIN): $(GOTRACE_OBJS)
 # injected binary
 GOMOD_BIN=libgomod.so.$(CONFIG_VERSION)
 GOMOD_LDFLAGS="-Wl,-init=_gomod_init" -fPIC -shared $(LDFLAGS)
-GOMOD_LIB=-ldl -lpthread gomod_printlib.a
-#./zydis/build/libZydis.a
+GOMOD_LIB=-ldl -lpthread gomod_printlib.a $(ZYDIS_LIB)
 GOMOD_OBJS=\
 	src/gomod.o \
 	src/dlopen_stub.o
