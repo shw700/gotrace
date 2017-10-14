@@ -2,3 +2,5 @@
 remove transformer call stacks
 support lookups on itabs
 * analysis of clone call should not occur in dump_wait_state() function
+handle named return values
+handle n-ary return values

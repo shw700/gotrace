@@ -262,6 +262,8 @@ void *recv_gt_msg(pid_t pid, int fd, int reqtype, size_t *plen, int *preqtype, i
 /* misc */
 void perror_pid(const char *msg, pid_t pid);
 pid_t gettid(void);
+void *map_closest_area(void *refaddr, size_t msize);
+size_t make_jmp_buf(unsigned long from, unsigned long to, void *buf, size_t buflen);
 
 
 #define PRINT(fmt, args...) \

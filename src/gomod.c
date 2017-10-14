@@ -354,13 +354,13 @@ void *
 client_socket_loop(void *arg) {
 	int fd = (int)((uintptr_t)arg);
 	pid_t tid = gettid();
-	int first = 1;
+	int first = 0;
 
 	client_loop_initialized = 1;
 
-	fprintf(stderr, "Loop reading (%u).\n", (unsigned int)syscall(SYS_gettid));
+	fprintf(stderr, "Loop reading (%d).\n", gettid());
 	raise(SIGUSR2);
-//	fprintf(stderr, "Loop continuing.\n");
+	fprintf(stderr, "Loop continuing.\n");
 
 	while (1) {
 		unsigned char *dbuf;
@@ -389,19 +389,19 @@ client_socket_loop(void *arg) {
 			if (!iret) {
 				fprintf(stderr, "Error: could not create intercept redirection on address %p\n",
 					(void *)*addrp);
-			} else {
-				fprintf(stderr, "Loop: intercept on %p -> %p\n",
-					(void *)*addrp, (void *)iret);
+				addr_new = 0;
+			}
 
-				memcpy(dbuf, &addr_new, sizeof(addr_new));
+			fprintf(stderr, "Loop: intercept on %p -> %p\n",
+				(void *)*addrp, (void *)iret);
 
-				// hdr size stays the same, and of course reqtype too
-				if (send_gt_msg(tid, fd, reqtype, dbuf, dblen, first) < 0) {
-					fprintf(stderr, "Unexpected error sending back response body data on gotrace control socket.\n");
-					free(dbuf);
-					break;
-				}
+			memcpy(dbuf, &addr_new, sizeof(addr_new));
 
+			// hdr size stays the same, and of course reqtype too
+			if (send_gt_msg(tid, fd, reqtype, dbuf, dblen, first) < 0) {
+				fprintf(stderr, "Unexpected error sending back response body data on gotrace control socket.\n");
+				free(dbuf);
+				break;
 			}
 
 			free(dbuf);
@@ -448,7 +448,7 @@ void _gomod_init(void)
 	char *gotrace_socket_path = NULL;
 	int fd;
 
-	fprintf(stderr, "Loop (%lu)\n", syscall(SYS_gettid));
+	fprintf(stderr, "Loop outer (%d)\n", gettid());
 //	char *rx = call_golang_func_str((void *)0x000000000402100, (void *)0xc0debabe);
 //	fprintf(stderr, "Loop result heh = %p\n", rx);
 

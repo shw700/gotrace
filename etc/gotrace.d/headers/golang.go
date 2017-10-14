@@ -137,6 +137,8 @@ func net.xtoi(s string) (int, int)
 func net.last(s string, b byte) int
 func net.ResolveTCPAddr(network string, address string) (*net.TCPAddr, error)
 //func net.ipToSockaddr(family int, ip IP, port int, zone string) (syscall.Sockaddr, error)
+//func Connect(fd int, sa Sockaddr) (err error)
+func syscall.Connect(fd int, sa Sockaddr) error
 
 func runtime/internal/atomic.Load(ptr *uint32) uint32
 func runtime.memmove(to *any, frm *any, length uintptr)

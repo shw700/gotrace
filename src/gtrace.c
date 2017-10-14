@@ -14,7 +14,7 @@
 #include <sys/un.h>
 #include <pthread.h>
 
-// TODO: waitpid(..., WUNTRACED)
+// TODO: waitpid(..., WUNTRACED), _WALL
 
 #include "config.h"
 #include "elfh.h"
@@ -71,8 +71,15 @@ char gotrace_socket_path[128];
 
 char *excluded_intercepts[] = {
 //	"runtime.(*mcache).refill",
-	"main.GetConnection",
-	"main.TouchConnection"
+//	"main.GetConnection",
+//	"main.TouchConnection"
+/*	"runtime.atomicstorep",
+	"runtime.cgocall",
+	"runtime.endcgo",
+	"runtime.exitsyscall",
+	"runtime.exitsyscallfast",
+	"runtime.lock",
+	"runtime.futexwakeup"*/
 };
 
 char *read_bytes_remote(pid_t pid, char *addr, size_t slen);
@@ -123,7 +130,7 @@ call_remote_func(pid_t pid, unsigned char reqtype, void *data, size_t dsize, siz
 {
 	void *result;
 	int oreqtype;
-	int first = 1;
+	int first = 0;
 	pid_t cpid;
 
 	int fd = test_fd;
@@ -133,7 +140,7 @@ call_remote_func(pid_t pid, unsigned char reqtype, void *data, size_t dsize, siz
 		return NULL;
 	}
 
-	fprintf(stderr, "Sent and waiting to receive\n");
+	fprintf(stderr, "Sent and waiting to receive (%d)\n", fd);
 
 	result = recv_gt_msg(pid, fd, reqtype, psize, &oreqtype, first, &cpid);
 
@@ -175,13 +182,18 @@ call_remote_intercept(pid_t pid, char **funcnames, unsigned long *addresses, siz
 	result = call_remote_func(pid, GOMOD_RT_SET_INTERCEPT, addresses, naddr*sizeof(unsigned long), &outsize);
 	taddr = (unsigned long *)result;
 
-	if (!result)
-		fprintf(stderr, "XXX: call remote intercept returned NULL\n");
-	else {
+	if (!result) {
+		PRINT_ERROR("%s", "XXX: call remote intercept returned NULL\n");
+		return -1;
+	} else if (!*taddr) {
+		PRINT_ERROR("%s", "Error: remote intercept attempt on function failed!\n");
+		return -1;
+	} else {
 		fprintf(stderr, "XXX: call remote intercept: result = %p / %zu: %p\n", result, outsize, (void *)*taddr);
 
 		if (save_remote_intercept(pid, *funcnames, (void *)*taddr, is_entry) < 0) {
-			fprintf(stderr, "Unknown error occurred setting remote function intercept\n");
+			PRINT_ERROR("%s", "Unknown error occurred setting remote function intercept\n");
+			return -1;
 		}
 	}
 
@@ -207,7 +219,7 @@ gotrace_socket_loop(void *param) {
 			exit(EXIT_FAILURE);
 		}
 
-		fprintf(stderr, "XXX: ACCEPTED!\n");
+		fprintf(stderr, "XXX: ACCEPTED (%d)!\n", cfd);
 		test_fd = cfd;
 
 /*		if (set_all_intercepts(test_pid) < 0) {
@@ -391,7 +403,7 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 
 	// Check for remote intercept first.
 	if (!check_remote_intercept(pid, hot_pc, &regs)) {
-		return 0;
+		return 1;
 	}
 
 	for (i = 0; i < saved_prolog_entries; i++) {
@@ -880,27 +892,21 @@ set_all_intercepts(pid_t pid) {
 	size_t i;
 
 	for (i = 0; i < sizeof(symbol_store)/sizeof(symbol_store[0]); i++) {
-		if (symbol_store[i].l) {
+		if (!symbol_store[i].l)
+			continue;
 
-		#define MAXJ	2000	
-//		printf("HEH: MAXJ = %s\n", symbol_store[i].map[MAXJ].name);
-			for (size_t j = 0; j < symbol_store[i].msize; j++) {
-//				printf("CANDIDATE: %s - %lx\n", symbol_store[i].map[j].name, symbol_store[i].map[j].addr);
+		for (size_t j = 0; j < symbol_store[i].msize; j++) {
+//			fprintf(stderr, "CANDIDATE: %s - %lx\n", symbol_store[i].map[j].name, symbol_store[i].map[j].addr);
 
-				if (is_intercept_excluded(symbol_store[i].map[j].name)) {
-					PRINT_ERROR("Skipping over excluded intercept: %s\n", symbol_store[i].map[j].name);
-					continue;
-				}
-
-				if (j > MAXJ)
-					continue;
-
-				if (set_intercept(pid, (void *)symbol_store[i].map[j].addr) < 0) {
-					PRINT_ERROR("Error: could not set intercept on symbol: %s\n", symbol_store[i].map[j].name);
-					return -1;
-				}
+			if (is_intercept_excluded(symbol_store[i].map[j].name)) {
+				PRINT_ERROR("Skipping over excluded intercept: %s\n", symbol_store[i].map[j].name);
+				continue;
 			}
 
+			if (set_intercept(pid, (void *)symbol_store[i].map[j].addr) < 0) {
+				PRINT_ERROR("Error: could not set intercept on symbol: %s\n", symbol_store[i].map[j].name);
+				return -1;
+			}
 		}
 
 	}
@@ -1036,10 +1042,10 @@ trace_program(const char *progname, char * const *args) {
 
 	printf("Parent detected possible exec\n");
 
-	if (set_all_intercepts(pid) < 0) {
+/*	if (set_all_intercepts(pid) < 0) {
 		PRINT_ERROR("%s", "Error encountered while setting intercepts.\n");
 		exit(EXIT_FAILURE);
-	}
+	} */
 	test_pid = pid;
 
 //	dump_intercepts();
@@ -1063,6 +1069,12 @@ trace_program(const char *progname, char * const *args) {
 
 		if (WIFSTOPPED(wait_status) && (WSTOPSIG(wait_status) == SIGUSR2)) {
 			PRINT_ERROR("Traced PID/TID (%d) is our own code; detaching.\n", cpid);
+
+			test_pid = cpid;
+			if (set_all_intercepts(test_pid) < 0) {
+				PRINT_ERROR("%s", "Error encountered while setting intercepts.\n");
+				exit(EXIT_FAILURE);
+			}
 
 			if (ptrace(PTRACE_SETOPTIONS, cpid, NULL, 0) < 0) {
 				perror_pid("ptrace(~PTRACE_SETOPTIONS)", cpid);
@@ -1092,15 +1104,25 @@ trace_program(const char *progname, char * const *args) {
 					perror_pid("ptrace(PTRACE_GETSIGINFO)", cpid);
 				else if (ptrace(PTRACE_GETREGS, cpid, 0, &regs) < 0) {
 					perror_pid("ptrace(PTRACE_GETREGS)", cpid);
-					fprintf(stderr, "SIGSEGV occurred at address: %p\n", si.si_addr);
+					PRINT_ERROR("SIGSEGV occurred at address: %p\n", si.si_addr);
 				} else {
-					fprintf(stderr, "SIGSEGV occurred at address %p / PC %p\n",
+					PRINT_ERROR("SIGSEGV occurred at address %p / PC %p\n",
 						si.si_addr, (void *)regs.rip);
 					print_instruction(cpid, (void *)regs.rip, 16);
 				}
 
-				if (scnt++ > 5)
-					exit(-1);
+				if (ptrace(PTRACE_DETACH, cpid, NULL, NULL) == -1) {
+					perror_pid("ptrace(PTRACE_DETACH)", cpid);
+				}
+
+				if (kill(cpid, SIGSEGV) == -1)
+					perror_pid("kill(SIGSEGV)", cpid);
+
+				if (scnt++ > 50) {
+					PRINT_ERROR("%s", "Received too many SIGSEGvs... exiting.\n");
+					exit(EXIT_FAILURE);
+				}
+
 			}
 		}
 
