@@ -254,10 +254,10 @@ struct lt_symbol* lt_symbol_get(struct lt_config_shared *cfg,
 char *call_remote_serializer(pid_t pid, const char *name, void *addr);
 
 /* network */
-ssize_t xsend(pid_t pid, int sockfd, const void *buf, size_t len);
-ssize_t xrecv(pid_t pid, int sockfd, void *buf, size_t len);
-int send_gt_msg(pid_t pid, int fd, int reqtype, void *data, size_t dlen);
-void *recv_gt_msg(pid_t pid, int fd, int reqtype, size_t *plen, int *preqtype);
+ssize_t xsend(pid_t pid, int sockfd, const void *buf, size_t len, int do_ctl);
+ssize_t xrecv(pid_t pid, int sockfd, void *buf, size_t len, int do_ctl, pid_t *pout);
+int send_gt_msg(pid_t pid, int fd, int reqtype, void *data, size_t dlen, int do_ctl);
+void *recv_gt_msg(pid_t pid, int fd, int reqtype, size_t *plen, int *preqtype, int do_ctl, pid_t *pout);
 
 /* misc */
 void perror_pid(const char *msg, pid_t pid);

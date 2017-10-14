@@ -123,23 +123,28 @@ call_remote_func(pid_t pid, unsigned char reqtype, void *data, size_t dsize, siz
 {
 	void *result;
 	int oreqtype;
+	int first = 1;
+	pid_t cpid;
 
 	int fd = test_fd;
 
-	if (send_gt_msg(pid, fd, reqtype, data, dsize) < 0) {
+	if (send_gt_msg(pid, fd, reqtype, data, dsize, 0) < 0) {
 		PRINT_ERROR("%s", "Error encountered in calling gomod function.\n");
 		return NULL;
 	}
 
 	fprintf(stderr, "Sent and waiting to receive\n");
 
-	result = recv_gt_msg(pid, fd, reqtype, psize, &oreqtype);
+	result = recv_gt_msg(pid, fd, reqtype, psize, &oreqtype, first, &cpid);
 
 	if (result && (reqtype != oreqtype)) {
 		PRINT_ERROR("Error receiving gotrace socket data of unexpected response type (%d)\n", oreqtype);
 		free(result);
 		return NULL;
 	}
+
+	if (first)
+		fprintf(stderr, "XXX: first client pid = %d\n", cpid);
 
 	return result;
 }

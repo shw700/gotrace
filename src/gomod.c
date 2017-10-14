@@ -354,6 +354,7 @@ void *
 client_socket_loop(void *arg) {
 	int fd = (int)((uintptr_t)arg);
 	pid_t tid = gettid();
+	int first = 1;
 
 	client_loop_initialized = 1;
 
@@ -368,7 +369,7 @@ client_socket_loop(void *arg) {
 
 		fprintf(stderr, "Loop Attempting to read bytes from %d\n", fd);
 
-		dbuf = recv_gt_msg(tid, fd, -1, &dblen, &reqtype);
+		dbuf = recv_gt_msg(tid, fd, -1, &dblen, &reqtype, 0, NULL);
 
 		fprintf(stderr, "Loop CMD SIZE: %zu bytes / type %u\n", dblen, reqtype);
 
@@ -395,7 +396,7 @@ client_socket_loop(void *arg) {
 				memcpy(dbuf, &addr_new, sizeof(addr_new));
 
 				// hdr size stays the same, and of course reqtype too
-				if (send_gt_msg(tid, fd, reqtype, dbuf, dblen) < 0) {
+				if (send_gt_msg(tid, fd, reqtype, dbuf, dblen, first) < 0) {
 					fprintf(stderr, "Unexpected error sending back response body data on gotrace control socket.\n");
 					free(dbuf);
 					break;
@@ -419,7 +420,7 @@ client_socket_loop(void *arg) {
 //				fprintf(stderr, "Loop serialized struct data: [%s]\n", sdata);
 				free(dbuf);
 
-				if (send_gt_msg(tid, fd, reqtype, sdata, strlen(sdata)) < 0) {
+				if (send_gt_msg(tid, fd, reqtype, sdata, strlen(sdata), first) < 0) {
 					fprintf(stderr, "Unexpected error sending back response body data on gotrace control socket.\n");
 					free(sdata);
 					break;
@@ -430,8 +431,8 @@ client_socket_loop(void *arg) {
 
 		}
 
+		first = 0;
         }
-
 
 //	exit(0);
 	fprintf(stderr, "Loop ending.\n");
