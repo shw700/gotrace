@@ -139,6 +139,7 @@ struct lt_args_sym {
 	char *name;
 
 	int argcnt;
+	int rargcnt;
 	int collapsed;
 #define LT_ARGS_RET 0
 	struct lt_arg **args;
@@ -186,8 +187,8 @@ int lt_args_add_struct(struct lt_config_shared *cfg, char *type_name,
 			struct lt_list_head *h);
 int lt_args_add_sym(struct lt_config_shared *cfg, struct lt_arg *sym,
 			struct lt_list_head *h, int collapsed, struct lt_args_sym **psym);
-int lt_args_add_sym_mret(struct lt_config_shared *cfg, struct lt_arg *sym, struct lt_arg **retn,
-			struct lt_list_head *h, int collapsed);
+int lt_args_add_sym2(struct lt_config_shared *cfg, struct lt_arg *sym, struct lt_list_head *h,
+			struct lt_list_head *rh, int collapsed, struct lt_args_sym **psym);
 int lt_args_add_typedef(struct lt_config_shared *cfg, const char *base,
 	const char *new, int pointer);
 int lt_args_buf_open(struct lt_config_shared *cfg, char *file);

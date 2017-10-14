@@ -72,11 +72,10 @@ whitespace	([ \t])
 			}
 <import>.		{ ; }
 
-"__attribute__"{whitespace}*"((".*"))"		{ return ATTRIBUTE; }
 "const"			{ return CONST; }
 <<EOF>>			{ return END; }
 "struct"		{ return STRUCT; }
-"sdflksjdgfunc"			{ return FUNC; }
+"func"			{ return FUNC; }
 {name}[!~^]?(\/[opxduh])?	{ lt_args_lval.s = strdup(lt_args_text); return NAME; }
 "\*"+			{ lt_args_lval.s = strdup(lt_args_text); return POINTER; }
 ")"			{ return ')'; }

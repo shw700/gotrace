@@ -840,16 +840,10 @@ int lt_stack_process_ret(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 			pid_t target, struct user_regs_struct *iregs, struct user_regs_struct *regs, struct lt_args_data *data, int silent,
 			lt_tsd_t *tsd)
 {
-	struct lt_arg *arg, **rarg;
+	struct lt_arg *arg;
 	void *pval;
-	size_t ret_offset = 0, nextra_args = 0, i;
+	size_t ret_offset = 0, i;
 	int needs_callstack = 0;
-
-	rarg = asym->ret_args;
-	while (rarg && *rarg) {
-		nextra_args++;
-		rarg++;
-	}
 
 	for(i = 1; i < asym->argcnt; i++) {
 		struct lt_arg *arg = asym->args[i];
@@ -861,14 +855,10 @@ int lt_stack_process_ret(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 		}
 	}
 
-	for (i = 0; i < nextra_args+1; i++) {
-		int last = (i + 1) == nextra_args+1, is_err;
+	for (i = 0; i < asym->rargcnt; i++) {
+		int last = (i == asym->rargcnt-1), is_err;
 
-		if (!i)
-			arg = asym->args[LT_ARGS_RET];
-		else
-			arg = asym->ret_args[i-1];
-
+		arg = asym->ret_args[i];
 		pval = get_value(cfg, arg, target, regs, ret_offset, 1, &ret_offset, &is_err);
 
 /*		if (is_err) {
@@ -945,11 +935,17 @@ int lt_stack_process_ret(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 
 		}
 
-		if ((arg->type_id != LT_ARGS_TYPEID_VOID) || (arg->pointer))
-			lt_args_cb_arg(cfg, arg, pval, data, last, 0, 1);
+		if ((arg->type_id != LT_ARGS_TYPEID_VOID) || (arg->pointer)) {
+			int dspname = !(arg == asym->args[LT_ARGS_RET]);
 
-		if ((cfg->args_detailed) &&
-		    (LT_ARGS_DTYPE_STRUCT == arg->dtype))
+//			if ((asym->rargcnt == 1) && (!strncmp(asym->args[0]->name, ANON_PREFIX, strlen(ANON_PREFIX))))
+			if ((asym->rargcnt == 1) && (arg == asym->ret_args[0]))
+				dspname = 0;
+
+			lt_args_cb_arg(cfg, arg, pval, data, last, dspname, 1);
+		}
+
+		if ((cfg->args_detailed) && (LT_ARGS_DTYPE_STRUCT == arg->dtype))
 			process_detailed_struct(cfg, arg, pval, data, regs, 0);
 
 	}

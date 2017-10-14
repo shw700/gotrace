@@ -351,7 +351,9 @@ do { \
 #define XFREE(parm)			free(parm)
 
 
-#define ANON_PREFIX	"_anon_"
+
+#define ANON_PREFIX_INTERNAL	"_anon_"
+#define ANON_PREFIX		"$r"
 
 
 #if __WORDSIZE == 64

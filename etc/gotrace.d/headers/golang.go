@@ -15,19 +15,14 @@ const mmap_prot (
 func runtime.gcenable()
 func runtime.osinit()
 
-//func convT2E(t *_type, elem unsafe.Pointer) (e eface)
-func runtime.convT2E(t *_type, elem unsafe.Pointer) elem
-//func assertE2T2(typ *byte, iface any) (ret any, ok bool)
-func runtime.assertE2T2(typ *byte, iface uintptr) (ret, bool)
-//func assertI2T2(typ *byte, iface any) (ret any, ok bool)
-func runtime.assertI2T2(typ *byte, iface uintptr) ret
-//func efacethash(i1 any) (ret uint32)
-func runtime.efacethash/x(i1 uintptr) uint32
+func runtime.convT2E(t *_type, elem unsafe.Pointer) (e face)
+func runtime.assertE2T2(typ *byte, iface uintptr) (ret any, ok bool)
+func runtime.assertI2T2(typ *byte, iface any) (ret any, ok bool)
+func runtime.efacethash/x(i1 uintptr) (ret uint32)
 
 //func memhash(p unsafe.Pointer, seed, s uintptr) uintptr
 func runtime.memhash/x(p uintptr, seed uintptr, s uintptr) uintptr
-//func getitab(inter *interfacetype, typ *_type, canfail bool) *itab {
-func runtime.getitab(inter *interfacetype, typ *_type, canfail bool) itab
+func runtime.getitab(inter *interfacetype, typ *_type, canfail bool) *itab
 
 
 // value
@@ -82,7 +77,7 @@ func runtime.mmap_fixed(v unsafe.Pointer, n uintptr, prot/om int32=mmap_prot, fl
 func runtime.closechan(c *hchan)
 func runtime.makechan(t *chantype, size int) *hchan
 //func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
-func runtime.chanrecv(c *hchan, ep unsafe.Pointer, block bool) bool
+func runtime.chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected bool, received bool)
 func runtime.chanrecv1(c *hchan, elem unsafe.Pointer)
 func runtime.chansend1(c *hchan, elem unsafe.Pointer)
 
@@ -91,7 +86,7 @@ func runtime.GOMAXPROCS(n int) int
 // syscalls
 func runtime.entersyscall(dummy int32)
 //func Syscall(trap int64, a1, a2, a3 int64) (r1, r2, err int64)
-func syscall.Syscall(trap int64, a1 int64=SYSCALL_NO, a2 int64/p, a3 int64) r1
+func syscall.Syscall(trap int64, a1 int64=SYSCALL_NO, a2 int64/p, a3 int64) (r1 int64, r2 int64, err int64)
 func runtime.exitsyscall(dummy int32)
 func runtime.exitsyscallfast() bool
 //func asmcgocall(fn, arg unsafe.Pointer) int32
@@ -101,7 +96,7 @@ func runtime.getcallerpc/p() uintptr
 func runtime.getcallersp/p(argp unsafe.Pointer) uintptr
 
 //func Write(fd int, p []byte) (n int, err error)
-int syscall.Write(fd int, p *byte)
+func syscall.Write(fd int, p *byte)
 
 func runtime.exit(code int32)
 func runtime.sleep(ms int32) int32
@@ -116,29 +111,26 @@ func runtime.timerproc(tb *timersBucket)
 func errors.New(text string) error
 
 // Networking
-//func runtime.netpoll(block bool) *g
-func runtime.netpoll(block bool) g
+func runtime.netpoll(block bool) *g
 func net.IP.IsLoopback() bool
 func net.selfConnect(fd *netFD, err error) bool
 //func LookupPort(network, service string) (port int, err error
-func net.LookupPort(network string, service string) (int, error)
-//func dtoi(s string) (n int, i int, ok bool
-func net.dtoi(s string) (int, int)
+func net.LookupPort(network string, service string) (port int, err error)
+func net.dtoi(s string) (n int, i int, ok bool)
 //func parseIPv4(s string) IP
 func net.parseIPv4(s string) net.IP
 //func parseIPv6(s string, zoneAllowed bool) (ip IP, zone string)
-func net.parseIPv6(s string, zoneAllowed bool) (net.IP, string)
+func net.parseIPv6(s string, zoneAllowed bool) (ip net.IP, zone string)
 //func splitHostZone(s string) (host, zone string
-func net.splitHostZone(s string) (string, string)
+func net.splitHostZone(s string) (host string, zone string)
 //func SplitHostPort(hostport string) (host, port string, err error
-func net.SplitHostPort(hostport string) (string, string)
-//func xtoi(s string) (n int, i int, ok bool)
-func net.xtoi(s string) (int, int)
+func net.SplitHostPort(hostport string) (host string, port string, err error)
+func net.xtoi(s string) (n int, i int, ok bool)
 func net.last(s string, b byte) int
 func net.ResolveTCPAddr(network string, address string) (*net.TCPAddr, error)
 //func net.ipToSockaddr(family int, ip IP, port int, zone string) (syscall.Sockaddr, error)
-//func Connect(fd int, sa Sockaddr) (err error)
-func syscall.Connect(fd int, sa Sockaddr) error
+func syscall.Connect(fd int, sa Sockaddr) (err error)
+func time.now() (sec int64, nsec int32, mono int64)
 
 func runtime/internal/atomic.Load(ptr *uint32) uint32
 func runtime.memmove(to *any, frm *any, length uintptr)
@@ -152,18 +144,17 @@ func runtime.gogo(buf *gobuf)
 
 // Format
 //func parsenum(s string, start, end int) (num int, isnum bool, newi int
-func fmt.parsenum(s string, start int, end int) int
+func fmt.parsenum(s string, start int, end int) (num int, isnum bool, newi int)
 
 //func runqsteal(_p_, p2 *p, stealRunNextG bool) *g
-func runtime.runqsteal(_p_ *p, p2 *p, stealRunNextG bool) g
+func runtime.runqsteal(_p_ *p, p2 *p, stealRunNextG bool) *g
 //func runqgrab(_p_ *p, batch *[256]guintptr, batchHead uint32, stealRunNextG bool) uint32
 func runtime.runqgrab(_p_ *p, batch *guintptr, batchHead uint32, stealRunNextG bool) uint32
-//func runqget(_p_ *p) (gp *g, inheritTime bool)
-func runtime.runqget(_p_ *p) (g, inheritTime)
+func runtime.runqget(_p_ *p) (gp *g, inheritTime bool)
 
 func runtime.return0()
 //func systemstack(fn func())
-func runtime.systemstack(func pfn)
+func runtime.systemstack(fn pfn)
 
 func runtime.checkdead()
 func runtime.schedule()

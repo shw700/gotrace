@@ -899,18 +899,104 @@ int lt_args_add_struct(struct lt_config_shared *cfg, char *type_name,
 	return 0;
 }
 
-int lt_args_add_sym_mret(struct lt_config_shared *cfg, struct lt_arg *ret, struct lt_arg **retn,
-			struct lt_list_head *h, int collapsed)
+int lt_args_add_sym2(struct lt_config_shared *cfg, struct lt_arg *ret, struct lt_list_head *h,
+			struct lt_list_head *rh, int collapsed, struct lt_args_sym **psym)
 {
+	ENTRY e, *ep;
 	struct lt_args_sym *sym;
-	int res;
+	struct lt_arg *arg;
+	int i = 0;
+	size_t argno = 0, rargno = 0;
 
-	res = lt_args_add_sym(cfg, ret, h, collapsed, &sym);
+//	fprintf(stderr, "++++++++++ lt_args_add_sym2(): %s\n", ret->name);
 
-	if (!res)
-		sym->ret_args = retn;
+	PRINT_VERBOSE(cfg, 3, "got symbol '%s %s'\n",
+			ret->type_name, ret->name);
 
-	return res;
+	XMALLOC_ASSIGN(sym, sizeof(*sym));
+	if (!sym)
+		return -1;
+
+	memset(sym, 0, sizeof(*sym));
+	sym->name = ret->name;
+
+	sym->argcnt = 1;
+	sym->rargcnt = 0;
+	sym->collapsed = collapsed;
+	lt_list_for_each_entry(arg, h, args_list)
+		sym->argcnt++;
+
+	lt_list_for_each_entry(arg, rh, args_list)
+		sym->rargcnt++;
+
+	XMALLOC_ASSIGN(sym->args, (sym->argcnt * sizeof(struct lt_arg**)));
+	XMALLOC_ASSIGN(sym->ret_args, (sym->rargcnt * sizeof(struct lt_arg**)));
+	if (!sym->args || !sym->ret_args) {
+		perror("malloc");
+		return -1;
+	}
+
+	PRINT_VERBOSE(cfg, 3, "got return %s, ptr %d\n",
+			ret->type_name, ret->pointer);
+
+	sym->args[i++] = ret;
+//	fprintf(stderr, "--- TOTAL args: %d\n", sym->argcnt);
+	lt_list_for_each_entry(arg, h, args_list) {
+//		fprintf(stderr,"\t - '%s %s / %s'\n", arg->type_name, arg->name, arg->real_type_name);
+		PRINT_VERBOSE(cfg, 3, "\t '%s %s'\n",
+				arg->type_name, arg->name);
+		sym->args[i++] = arg;
+		argno++;
+
+		if (!strcmp(arg->name, ANON_PREFIX_INTERNAL)) {
+			char nbuf[32];
+
+			snprintf(nbuf, sizeof(nbuf), "%s%zu", ANON_PREFIX, argno);
+			XFREE(arg->name);
+
+			XSTRDUP_ASSIGN(arg->name, nbuf);
+			if (!arg->name)
+				return -1;
+		}
+
+	}
+
+//	fprintf(stderr, "TOTAL return args: %d\n", sym->rargcnt);
+	lt_list_for_each_entry(arg, rh, args_list) {
+//		fprintf(stderr,"\t '%s %s / %s'\n", arg->type_name, arg->name, arg->real_type_name);
+		sym->ret_args[rargno++] = arg;
+
+		if (!strcmp(arg->name, ANON_PREFIX_INTERNAL)) {
+			char nbuf[32];
+
+			snprintf(nbuf, sizeof(nbuf), "%s%zu", ANON_PREFIX, rargno);
+			XFREE(arg->name);
+
+			XSTRDUP_ASSIGN(arg->name, nbuf);
+			if (!arg->name)
+				return -1;
+		}
+
+	}
+
+	e.key = sym->name;
+	e.data = sym;
+
+	if (!hsearch_r(e, ENTER, &ep, &cfg->args_tab)) {
+		PERROR("hsearch_r failed");
+		XFREE(sym);
+		/* we dont want to exit just because
+		   we ran out of our symbol limit */
+		PRINT_VERBOSE(cfg, 3, "reach the symbol number limit %u\n",
+				LT_ARGS_TAB);
+	} else
+		PRINT_VERBOSE(cfg, 3, "got symbol %s (%d args)\n",
+				sym->name, sym->argcnt);
+
+	if (psym)
+		*psym = sym;
+
+	return 0;
 }
 
 int lt_args_add_sym(struct lt_config_shared *cfg, struct lt_arg *ret,
@@ -955,7 +1041,7 @@ int lt_args_add_sym(struct lt_config_shared *cfg, struct lt_arg *ret,
 		sym->args[i++] = arg;
 		argno++;
 
-		if (!strcmp(arg->name, ANON_PREFIX)) {
+		if (!strcmp(arg->name, ANON_PREFIX_INTERNAL)) {
 			char nbuf[32];
 
 			snprintf(nbuf, sizeof(nbuf), "%s%zu", ANON_PREFIX, argno);

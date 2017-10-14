@@ -70,7 +70,7 @@ do { \
 %}
 
 
-%token NEWLINE NAME FILENAME FUNC STRUCT CONST IMPORT END POINTER ATTRIBUTE
+%token NEWLINE NAME FILENAME FUNC STRUCT CONST IMPORT END POINTER
 
 %union
 {
@@ -82,7 +82,7 @@ do { \
 }
 
 %type <s>         NAME
-%type <s>         VAR_NAME
+%type <s>         FUNC
 %type <s>         POINTER
 %type <s>         FILENAME
 %type <s>         NEWLINE
@@ -91,6 +91,7 @@ do { \
 %type <s>         ENUM_REF
 %type <enum_elem> CONST_ELEM
 %type <head>      ARGS
+%type <head>      XARGS
 %type <arg>       DEF
 %type <arg>       XDEF
 
@@ -233,113 +234,16 @@ EMPTY_COMMA:
 
 /* function definitions */
 func_def:
-XDEF '(' ARGS ')' '(' VAR_NAME ',' VAR_NAME ')'
+XDEF '(' ARGS ')' XARGS
 {
-	struct lt_arg **mret;
-	struct lt_arg *farg = $1, *arg, *arg2;
+	struct lt_arg *arg = $1;
 
-	// Now handle the return type
-	if (!(arg = find_arg(scfg, $6, args_def_pod, LT_ARGS_DEF_POD_NUM, 0))) {
+	if (lt_args_add_sym2(scfg, arg, $3, $5, arg->collapsed, NULL))
+		ERROR("failed to add symbol with multi-value return: %s\n", arg->name);
 
-		if (!(arg = lt_args_getarg(scfg, "void", ANON_PREFIX, 1, 1, NULL))) {
-			ERROR("unknown error[1] parsing return variable of type: %s\n", $6);
-		}
-	} else {
-		arg = lt_args_getarg(scfg, $6, "ret", 0, 1, NULL);
-	}
-
-	if (!arg) {
-			ERROR("unknown error[2] parsing return variable of type: %s\n", $6);
-	}
-
-	// Do the same for the next argument.
-	// XXX: This code needs to be made n-ary capable.
-
-	if (!(arg2 = find_arg(scfg, $8, args_def_pod, LT_ARGS_DEF_POD_NUM, 0))) {
-
-		if (!(arg2 = lt_args_getarg(scfg, "void", ANON_PREFIX, 1, 1, NULL))) {
-			ERROR("unknown error[1] parsing return variable of type: %s\n", $8);
-		}
-	} else {
-		arg2 = lt_args_getarg(scfg, $8, "ret2", 0, 1, NULL);
-	}
-
-	if (!arg2) {
-			ERROR("unknown error[2.2] parsing return variable of type: %s\n", $8);
-	}
-
-	mret = (struct lt_arg **)malloc(sizeof(*mret) * 2);
-	memset(mret, 0, sizeof(*mret)*2);
-	mret[0] = arg2;
-
-
-	// Swap the first argument with the last
-	// But we do need to preserve some information first
-	arg->name ? free(arg->name) : arg->name;
-	arg->fmt ? free(arg->fmt) : arg->fmt;
-	arg->bitmask_class ? free(arg->bitmask_class) : arg->bitmask_class;
-
-	arg->name = farg->name;
-	arg->fmt = farg->fmt;
-	arg->bitmask_class = farg->bitmask_class;
-	arg->collapsed = farg->collapsed;
-	arg->latrace_custom_struct_transformer = farg->latrace_custom_struct_transformer;
-	arg->latrace_custom_func_transformer = farg->latrace_custom_func_transformer;
-	arg->latrace_custom_func_intercept = farg->latrace_custom_func_intercept;
-
-	free(farg);
-	farg = arg;
-
-	if (lt_args_add_sym_mret(scfg, arg, mret, $3, arg->collapsed))
-		ERROR("failed to add symbol %s\n", arg->name);
-
-	// force creation of the new list head
+	// force creation of new list heads
 	$3 = NULL;
-}
-|
-XDEF '(' ARGS ')' VAR_NAME
-{
-	struct lt_arg *farg = $1, *arg;
-
-	// Now handle the return type
-	if (!(arg = find_arg(scfg, $5, args_def_pod, LT_ARGS_DEF_POD_NUM, 0))) {
-
-		if (!(arg = lt_args_getarg(scfg, "void", ANON_PREFIX, 1, 1, NULL))) {
-			ERROR("unknown error[1] parsing return variable of type: %s\n", $5);
-		}
-	} else {
-		arg = lt_args_getarg(scfg, $5, "ret", 0, 1, NULL);
-	}
-
-	if (!arg) {
-			ERROR("unknown error[2] parsing return variable of type: %s\n", $5);
-	}
-
-
-	// Swap the first argument with the last
-	// But we do need to preserve some information first
-	arg->name ? free(arg->name) : arg->name;
-	arg->fmt ? free(arg->fmt) : arg->fmt;
-	arg->bitmask_class ? free(arg->bitmask_class) : arg->bitmask_class;
-
-	arg->name = farg->name;
-	arg->fmt = farg->fmt;
-	arg->bitmask_class = farg->bitmask_class;
-	arg->collapsed = farg->collapsed;
-	arg->latrace_custom_struct_transformer = farg->latrace_custom_struct_transformer;
-	arg->latrace_custom_func_transformer = farg->latrace_custom_func_transformer;
-	arg->latrace_custom_func_intercept = farg->latrace_custom_func_intercept;
-
-	arg->real_type_name = strdup($5);
-
-	free(farg);
-	farg = arg;
-
-	if (lt_args_add_sym(scfg, arg, $3, arg->collapsed, NULL))
-		ERROR("failed to add symbol %s\n", arg->name);
-
-	// force creation of the new list head
-	$3 = NULL;
+	$5 = NULL;
 }
 |
 XDEF '(' ARGS ')'
@@ -351,6 +255,17 @@ XDEF '(' ARGS ')'
 
 	/* force creation of the new list head */
 	$3 = NULL;
+}
+
+XARGS:
+'(' ARGS ')'
+{
+	$$ = $2;
+}
+|
+ARGS
+{
+	$$ = $1;
 }
 
 ARGS:
@@ -380,19 +295,31 @@ ARGS ',' DEF
 
 		if (find_arg(scfg, $1, args_def_pod, LT_ARGS_DEF_POD_NUM, 0) == NULL) {
 
-			if (NULL == (arg = lt_args_getarg(scfg, $1, ANON_PREFIX, 0, 1, NULL)))
-				ERROR("unnamed variable of unknown type: %s\n", $1);
+			if (NULL == (arg = lt_args_getarg(scfg, $1, ANON_PREFIX_INTERNAL, 0, 1, NULL))) {
+				if (NULL == (arg = lt_args_getarg(scfg, "void", ANON_PREFIX_INTERNAL, 1, 1, NULL)))
+					ERROR("unnamed variable of unknown type: %s\n", $1);
+			}
+
+			arg->real_type_name = strdup($1);
 
 			GET_LIST_HEAD(h);
 			lt_list_add_tail(&arg->args_list, h);
 			$$ = h;
 		} else {
+
+			if (NULL == (arg = lt_args_getarg(scfg, $1, ANON_PREFIX_INTERNAL, 0, 1, NULL)))
+				ERROR("unknown error parsing anonymous instance of type: %s\n", $1);
+
+			arg->real_type_name = strdup($1);
+
 			GET_LIST_HEAD($$);
+			lt_list_add_tail(&arg->args_list, $$);
+//			$$ = h;
 		}
 
 	} else {
 
-		if (NULL == (arg = lt_args_getarg(scfg, "int", ANON_PREFIX, 0, 1, $1)))
+		if (NULL == (arg = lt_args_getarg(scfg, "int", ANON_PREFIX_INTERNAL, 0, 1, $1)))
 			ERROR("unknown error parsing anonymous enum instance of type: %s\n", $1);
 
 		GET_LIST_HEAD(h);
@@ -414,9 +341,9 @@ NAME NAME ENUM_REF
 	if (NULL == (arg = lt_args_getarg(scfg, $2, $1, 0, 1, $3))) {
 		if (getenum(scfg, $2) == NULL) {
 			if (getenum_bm(scfg, $2) == NULL) {
-				if (NULL == (arg = lt_args_getarg(scfg, "void", $1, 1 /*ptrno*/, 1, $3))) {
+				if (NULL == (arg = lt_args_getarg(scfg, "void", $1, 1 /*ptrno*/, 1, $3)))
 					ERROR("unknown argument type[2A] - %s; possibly due to enum specification of \"%s\"\n", $2, $3);
-				}
+				arg->real_type_name = strdup($2);
 			}
 		}
 
@@ -447,29 +374,24 @@ NAME
 {
 	struct lt_arg *arg;
 
-	if (NULL == (arg = lt_args_getarg(scfg, $1, ANON_PREFIX, 0, 1, NULL))) {
-
-		if (getenum(scfg, $1) == NULL)
-			ERROR("unknown argument type[6a] - %s\n", $1);
-
-		if (NULL == (arg = lt_args_getarg(scfg, "int", ANON_PREFIX, 0, 1, $1)))
-			ERROR("unknown argument type[6b] - %s\n", $1);
-
+	if (NULL == (arg = lt_args_getarg(scfg, $1, ANON_PREFIX_INTERNAL, 0, 1, NULL))) {
+		if (NULL == (arg = lt_args_getarg(scfg, "void", ANON_PREFIX_INTERNAL, 1 /*ptrno*/, 1, NULL)))
+			ERROR("unknown argument type[2AA] - %s\n", $1);
 	}
 
 	$$ = arg;
 }
 |
-NAME POINTER
+POINTER NAME
 {
 	struct lt_arg *arg;
-	int ptrno = strlen($2);
+	int ptrno = strlen($1);
 
-	free ($2);
+	free($1);
 
-	if (NULL == (arg = lt_args_getarg(scfg, $1, ANON_PREFIX, ptrno, 1, NULL))) {
-		if (NULL == (arg = lt_args_getarg(scfg, "void", ANON_PREFIX, ptrno, 1, NULL)))
-			ERROR("unknown argument type[7] - %s\n", $1);
+	if (NULL == (arg = lt_args_getarg(scfg, $2, ANON_PREFIX_INTERNAL, ptrno, 1, NULL))) {
+		if (NULL == (arg = lt_args_getarg(scfg, "void", ANON_PREFIX_INTERNAL, ptrno, 1, NULL)))
+			ERROR("unknown argument type[7] - %s\n", $2);
 	}
 
 	$$ = arg;
@@ -503,94 +425,16 @@ import_def: IMPORT '"' FILENAME '"'
 }
 
 XDEF:
-NAME NAME ENUM_REF
-{
-
-	if (!strcmp($1, "func"))
-		$1 = "void";
-
-	struct lt_arg *arg;
-
-	if (NULL == (arg = lt_args_getarg(scfg, $1, $2, 0, 1, $3))) {
-		if (getenum(scfg, $1) == NULL) {
-			if (getenum_bm(scfg, $1) == NULL)
-				ERROR("unknown argument type[2a] - %s; possibly due to enum specification of \"%s\"\n", $1, $3);
-		}
-
-		if (NULL == (arg = lt_args_getarg(scfg, "int", $2, 0, 1, $1)))
-			ERROR("unknown argument type[2b] - %s; possibly due to enum specification of \"%s\"\n", $1, $3);
-	}
-
-	$$ = arg;
-}
-|
-NAME POINTER NAME ENUM_REF
-{
-	struct lt_arg *arg;
-	int ptrno = strlen($2);
-
-	free($2);
-
-	if (NULL == (arg = lt_args_getarg(scfg, $1, $3, ptrno, 1, $4))) {
-		if (NULL == (arg = lt_args_getarg(scfg, "void", $3, ptrno, 1, $4)))
-			ERROR("unknown argument type[3] - %s\n", $1);
-	}
-
-	$$ = arg;
-}
-|
-NAME
+FUNC NAME
 {
 	struct lt_arg *arg;
 
-	if (NULL == (arg = lt_args_getarg(scfg, $1, ANON_PREFIX, 0, 1, NULL))) {
-
-		if (getenum(scfg, $1) == NULL)
-			ERROR("unknown argument type[6a] - %s\n", $1);
-
-		if (NULL == (arg = lt_args_getarg(scfg, "int", ANON_PREFIX, 0, 1, $1)))
-			ERROR("unknown argument type[6b] - %s\n", $1);
-
-	}
-
-	$$ = arg;
-}
-|
-NAME POINTER
-{
-	struct lt_arg *arg;
-	int ptrno = strlen($2);
-
-	free ($2);
-
-	if (NULL == (arg = lt_args_getarg(scfg, $1, ANON_PREFIX, ptrno, 1, NULL))) {
-		if (NULL == (arg = lt_args_getarg(scfg, "void", ANON_PREFIX, ptrno, 1, NULL)))
-			ERROR("unknown argument type[7] - %s\n", $1);
-	}
-
-	$$ = arg;
-}
-|
-NAME '=' NAME NAME
-{
-	struct lt_arg *arg;
-
-	if (NULL == (arg = lt_args_getarg(scfg, $1, $4, 0, 1, $3)))
-		ERROR("unknown argument type[9] - %s; possibly due to enum specification of \"%s\"\n", $1, $3);
+	if (NULL == (arg = lt_args_getarg(scfg, "void", $2, 0, 1, NULL)))
+		ERROR("unknown argument type[2b] - %s\n", $2);
 
 	$$ = arg;
 }
 
-VAR_NAME:
-NAME
-{
-	$$ = $1;
-}
-|
-POINTER NAME
-{
-	$$ = $2;
-}
 
 %%
 

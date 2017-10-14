@@ -150,10 +150,10 @@ int glob_err(const char *epath, int eerrno) {
 	return 0;
 }
 
-#define STRUCT_TRANSFORM_PREFIX	"latrace_struct_to_str_"
-#define FUNC_TRANSFORM_PREFIX	"latrace_func_to_str_"
-#define FUNC_INTERCEPT_PREFIX	"latrace_func_intercept_"
-#define EXPORT_BIND_PREFIX	"latrace_bind_"
+#define STRUCT_TRANSFORM_PREFIX	"gotrace_struct_to_str_"
+#define FUNC_TRANSFORM_PREFIX	"gotrace_func_to_str_"
+#define FUNC_INTERCEPT_PREFIX	"gotrace_func_intercept_"
+#define EXPORT_BIND_PREFIX	"gotrace_bind_"
 int init_custom_handlers(struct lt_config_audit *cfg)
 {
 	static char *globdir = NULL;

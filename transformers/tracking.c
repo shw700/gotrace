@@ -8,7 +8,7 @@
 /*
  * Example of custom user transformers and intercepts that can be used to
  * map out dynamically allocated addresses for subsequent address
- * resolution in latrace output.
+ * resolution in gotrace output.
  */
 
 
@@ -30,11 +30,9 @@ void (*sym_add_address_mapping)(void *, size_t, const char *) = NULL;
 void (*sym_remove_address_mapping)(void *, size_t, const char *, int) = NULL;
 
 
-void (*latrace_bind_add_address_mapping)(void *, size_t, const char *) = NULL;
 
-
-int latrace_func_to_str_runtime__persistentalloc(void **args, size_t argscnt, char *buf, size_t blen, void *retval);
-int latrace_func_to_str_runtime__makechan(void **args, size_t argscnt, char *buf, size_t blen, void *retval);
+int gotrace_func_to_str_runtime__persistentalloc(void **args, size_t argscnt, char *buf, size_t blen, void *retval);
+int gotrace_func_to_str_runtime__makechan(void **args, size_t argscnt, char *buf, size_t blen, void *retval);
 
 
 void misc_transformer_init()
@@ -67,7 +65,7 @@ const char *call_lookup_addr(void *addr, char *outbuf, size_t bufsize)
 }
 
 
-int latrace_func_to_str_runtime__persistentalloc(void **args, size_t argscnt, char *buf, size_t blen, void *retval)
+int gotrace_func_to_str_runtime__persistentalloc(void **args, size_t argscnt, char *buf, size_t blen, void *retval)
 {
 
 	if (!sym_add_address_mapping || !retval || (argscnt != 3))
@@ -87,7 +85,7 @@ int latrace_func_to_str_runtime__persistentalloc(void **args, size_t argscnt, ch
 	return -1;
 }
 
-int latrace_func_to_str_runtime__makechan(void **args, size_t argscnt, char *buf, size_t blen, void *retval)
+int gotrace_func_to_str_runtime__makechan(void **args, size_t argscnt, char *buf, size_t blen, void *retval)
 {
 
 	if (!sym_add_address_mapping || !retval || (argscnt != 2))
