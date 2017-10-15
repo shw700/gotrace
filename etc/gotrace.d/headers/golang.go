@@ -95,7 +95,6 @@ func runtime.asmcgocall(fn unsafe.Pointer, arg unsafe.Pointer) int32
 func runtime.getcallerpc/p() uintptr
 func runtime.getcallersp/p(argp unsafe.Pointer) uintptr
 
-//func Write(fd int, p []byte) (n int, err error)
 func syscall.Write(fd int, p []byte) (n int, err error)
 
 func runtime.exit(code int32)

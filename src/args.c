@@ -1509,12 +1509,14 @@ static int getstr_addenum(struct lt_config_shared *cfg, struct lt_arg *arg,
 	return 0;
 }
 
-static char *massage_string(const char *s)
+static char *massage_string(const unsigned char *s, size_t slen)
 {
 	char *result;
-	size_t rlen, slen, i, d_i;
+	size_t rlen, i, d_i;
 
-	slen = strlen(s);
+	if (!slen)
+		slen = strlen((char *)s);
+
 	rlen = (slen * 2) + 6;
 
 	XMALLOC_ASSIGN(result, rlen);
@@ -1530,7 +1532,14 @@ static char *massage_string(const char *s)
 			break;
 		}
 
-		if ((s[i] != '\n') && (s[i] != '\r'))
+		if (!isgraph(s[i]) && !isspace(s[i])) {
+			char hexbuf[8];
+
+			snprintf(hexbuf, sizeof(hexbuf), "\\x%.2x", s[i]);
+			memcpy(&(result[d_i]), hexbuf, 4);
+			d_i += 4;
+		}
+		else if ((s[i] != '\n') && (s[i] != '\r') && (s[i] != '\t'))
 			result[d_i++] = s[i];
 		else {
 			result[d_i++] = '\\';
@@ -1539,6 +1548,8 @@ static char *massage_string(const char *s)
 				result[d_i++] = 'n';
 			else if (s[i] == '\r')
 				result[d_i++] = 'r';
+			else if (s[i] == '\t')
+				result[d_i++] = 't';
 			else
 				result[d_i++] = '?';
 
@@ -1578,7 +1589,7 @@ static int getstr_pod(struct lt_config_shared *cfg, pid_t pid, int dspname, stru
 		}
 
 		if ((s = read_string_remote(pid, pval, psize)))
-			ms = massage_string(s);
+			ms = massage_string((unsigned char *)s, psize);
 
 		if (!ms)
 			len = snprintf(argbuf, alen, "%s%s[%zu]{[..decoding error..]}", d1, d2, psize);
@@ -1787,7 +1798,7 @@ do {                                                                 \
 				void *val = pval;
 
 				if (val) {
-					char *s = massage_string(val);
+					char *s = massage_string(val, 0);
 					int slen;
 					int left = alen;
 					int info_len = 0;
