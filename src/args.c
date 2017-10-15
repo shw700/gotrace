@@ -193,6 +193,19 @@ struct lt_arg args_def_pod[LT_ARGS_DEF_POD_NUM] = {
 		.args_list = { NULL, NULL }
 	},
 	{
+		.dtype     = LT_ARGS_DTYPE_POD,
+		.type_id   = LT_ARGS_TYPEID_INT8,
+		.type_len  = sizeof(int8_t),
+		.type_name = "int8",
+		.pointer   = 0,
+		.name      = "",
+		.mmbcnt    = 0,
+                .arch      = NULL,
+		.en        = NULL,
+		.args_head = NULL,
+		.args_list = { NULL, NULL }
+	},
+	{
 		.dtype     = LT_ARGS_DTYPE_POD, 
 		.type_id   = LT_ARGS_TYPEID_UINT8,
 		.type_len  = sizeof(uint8_t),
@@ -1121,10 +1134,24 @@ static struct lt_arg* argdup(struct lt_config_shared *cfg, struct lt_arg *asrc)
 	return arg;
 }
 
+#define NUM_TYPE_MAPPINGS	2
+const char *type_mapping_table[NUM_TYPE_MAPPINGS][2] =
+{
+        { "byte", "uint8" },
+        { "rune", "int32" },
+};
+
 struct lt_arg* find_arg(struct lt_config_shared *cfg, const char *type,
 			struct lt_arg argsdef[], int size, int create)
 {
 	int i;
+
+	for (i = 0; i < NUM_TYPE_MAPPINGS; i++) {
+		if (!strcmp(type, type_mapping_table[i][0])) {
+			type = type_mapping_table[i][1];
+			break;
+		}
+	}
 
 	for(i = 0; i < size; i++) {
 		struct lt_arg *arg;
@@ -1175,11 +1202,27 @@ struct lt_arg* lt_args_getarg(struct lt_config_shared *cfg, const char *type,
 	struct lt_arg *arg;
 	void *xfm_func = NULL;
 	char *bitmask = NULL, *fmt = NULL, *name_copy = NULL, *modifier = NULL;
+	char *nname = NULL;
 	int collapsed = 0;
 
 	if (name) {
+		char *nptr;
+
 		bitmask = strchr(name, '|');
 		fmt = strchr(name, '/');
+
+		if (strchr(name, '\\')) {
+
+			if (!(nptr = nname = strdup(name)))
+				return NULL;
+
+			while (*nptr) {
+				if (*nptr == '\\')
+					*nptr = '/';
+				nptr++;
+			}
+		}
+
 	}
 
 	if (bitmask && fmt && (bitmask < fmt))
@@ -1308,9 +1351,14 @@ struct lt_arg* lt_args_getarg(struct lt_config_shared *cfg, const char *type,
 
 	}
 
-	XSTRDUP_ASSIGN(arg->name, name);
-	if (!arg->name)
-		return NULL;
+	if (nname)
+		arg->name = nname;
+	else {
+		XSTRDUP_ASSIGN(arg->name, name);
+
+		if (!arg->name)
+			return NULL;
+	}
 
 	/* If the type is already a pointer (could be for typedef), 
 	   give it a chance to show up. There's only one pointer for 
@@ -1501,8 +1549,8 @@ static char *massage_string(const char *s)
 	return result;
 }
 
-static int getstr_pod(struct lt_config_shared *cfg, int dspname, struct lt_arg *arg,
-				void *pval, char *argbuf, int *arglen)
+static int getstr_pod(struct lt_config_shared *cfg, pid_t pid, int dspname, struct lt_arg *arg,
+			void *pval, size_t psize, char *argbuf, int *arglen)
 {
 	int len = 0, alen = *arglen;
 	int namelen = strlen(arg->name);
@@ -1514,6 +1562,38 @@ static int getstr_pod(struct lt_config_shared *cfg, int dspname, struct lt_arg *
 
 	if (alen < 5)
 		return 0;
+
+	if (arg->pointer == -1) {
+		char *d1 = dspname ? arg->name : "";
+		char *d2 = dspname ? LT_EQUAL : "";
+		char *s, *ms = NULL;
+		int is_byte_string;
+
+		is_byte_string = ((arg->type_id == LT_ARGS_TYPEID_CHAR) || (arg->type_id == LT_ARGS_TYPEID_INT8) ||
+			(arg->type_id == LT_ARGS_TYPEID_UINT8));
+
+		if (!is_byte_string) {
+			len = snprintf(argbuf, alen, "%s%s[%zu]{...}", d1, d2, psize);
+			goto out;
+		}
+
+		if ((s = read_string_remote(pid, pval, psize)))
+			ms = massage_string(s);
+
+		if (!ms)
+			len = snprintf(argbuf, alen, "%s%s[%zu]{[..decoding error..]}", d1, d2, psize);
+		else {
+			len = snprintf(argbuf, alen, "%s%s[%zu]{\"%s\"}", d1, d2, psize, ms);
+		}
+
+		if (s)
+			XFREE(s);
+
+		if (ms)
+			XFREE(ms);
+
+		goto out;
+	}
 	
 	*arglen = 0;
 
@@ -1522,7 +1602,7 @@ static int getstr_pod(struct lt_config_shared *cfg, int dspname, struct lt_arg *
 		char *sres;
 
 		dname1 = dspname ? arg->name : "";
-		dname2 = dspname ? "=" : "";
+		dname2 = dspname ? LT_EQUAL : "";
 
 		if ((sres = call_remote_serializer(-1, arg->real_type_name, pval))) {
 			len = snprintf(argbuf, alen, "%s%s%s", dname1, dname2, sres);
@@ -1537,7 +1617,7 @@ static int getstr_pod(struct lt_config_shared *cfg, int dspname, struct lt_arg *
 		const char *dname1, *dname2;
 
 		dname1 = dspname ? arg->name : "";
-		dname2 = dspname ? "=" : "";
+		dname2 = dspname ? LT_EQUAL : "";
 
 		if (!fn)
 			len = snprintf(argbuf, alen, "%s%sfn@ NULL", dname1, dname2);
@@ -1772,7 +1852,7 @@ out:
 	return 0;
 }
 
-int lt_args_cb_arg(struct lt_config_shared *cfg, struct lt_arg *arg, void *pval, 
+int lt_args_cb_arg(struct lt_config_shared *cfg, pid_t pid, struct lt_arg *arg, void *pval, size_t psize,
 		   struct lt_args_data *data, int last, int dspname, int multi_fmt)
 {
 	int len = data->arglen;
@@ -1780,7 +1860,7 @@ int lt_args_cb_arg(struct lt_config_shared *cfg, struct lt_arg *arg, void *pval,
 	PRINT_VERBOSE(cfg, 1, "arg '%s %s', pval %p, last %d\n",
 				arg->type_name, arg->name, pval, last);
 
-	getstr_pod(cfg, dspname, arg, pval, 
+	getstr_pod(cfg, pid, dspname, arg, pval, psize,
 			data->args_buf + data->args_totlen, &len);
 	data->args_totlen += len;
 
@@ -1806,14 +1886,14 @@ int lt_args_cb_arg(struct lt_config_shared *cfg, struct lt_arg *arg, void *pval,
 	return 0;
 }
 
-int lt_args_cb_struct(struct lt_config_shared *cfg, int type, struct lt_arg *arg, 
+/*int lt_args_cb_struct(struct lt_config_shared *cfg, int type, struct lt_arg *arg,
 		      void *pval, struct lt_args_data *data, int last)
 {
 	PRINT_VERBOSE(cfg, 1,
 		"type %d, arg '%s %s', pval %p, last %d, pointer %d\n",
 		type, arg->type_name, arg->name, pval, last, arg->pointer);
 
-	/* initiall call for the structure argument */
+	// initial call for the structure argument
 	if (type == LT_ARGS_STRUCT_ITSELF) {
 
 		data->argsd_totlen += sprintf(data->argsd_buf + data->argsd_totlen, 
@@ -1821,12 +1901,12 @@ int lt_args_cb_struct(struct lt_config_shared *cfg, int type, struct lt_arg *arg
 						arg->type_name, arg->name);
 		return 0;
 
-	/* subsequent calls for all structure arguments */
+	// subsequent calls for all structure arguments
 	} else if (type == LT_ARGS_STRUCT_ARG) {
 
 		int len = cfg->args_detail_maxlen - data->argsd_totlen;
 
-		getstr_pod(cfg, 1, arg, pval, data->argsd_buf + data->argsd_totlen, &len);
+		getstr_pod(cfg, pid, 1, arg, pval, 0, data->argsd_buf + data->argsd_totlen, &len);
 		data->argsd_totlen += len;
 
 		if (!last) {
@@ -1838,7 +1918,7 @@ int lt_args_cb_struct(struct lt_config_shared *cfg, int type, struct lt_arg *arg
 	}
 	
 	return 0;
-}
+}*/
 
 static int getargs(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 		pid_t target, struct user_regs_struct *regs, char *abuf, size_t argblen, char **adbuf, int silent, lt_tsd_t *tsd)

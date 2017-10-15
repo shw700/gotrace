@@ -46,11 +46,6 @@ static int struct_alive = 0;
 static int struct_empty = 1;
 struct lt_include *lt_args_sinc;
 
-const char *typedef_mapping_table[12][2] =
-{
-	{ "byte", "uint8" },
-	{ "rune", "int32" },
-};
 
 #define ERROR(fmt, args...) \
 do { \
@@ -70,7 +65,7 @@ do { \
 %}
 
 
-%token NEWLINE NAME FILENAME FUNC STRUCT CONST IMPORT END POINTER
+%token NEWLINE NAME FILENAME FUNC STRUCT CONST IMPORT END POINTER SLICE
 
 %union
 {
@@ -367,6 +362,16 @@ NAME POINTER NAME ENUM_REF
 	}
 
 	arg->real_type_name = strdup($3);
+	$$ = arg;
+}
+|
+NAME SLICE NAME
+{
+	struct lt_arg *arg;
+
+	if (NULL == (arg = lt_args_getarg(scfg, $3, $1, -1 /* slice */, 1, NULL)))
+		ERROR("unknown argument type[3] - %s\n", $3);
+
 	$$ = arg;
 }
 |

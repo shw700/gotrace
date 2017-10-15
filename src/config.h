@@ -265,6 +265,9 @@ pid_t gettid(void);
 void *map_closest_area(void *refaddr, size_t msize);
 size_t make_jmp_buf(unsigned long from, unsigned long to, void *buf, size_t buflen);
 
+/* arch specific */
+char *read_string_remote(pid_t pid, char *addr, size_t slen);
+
 
 #define PRINT(fmt, args...) \
 do { \

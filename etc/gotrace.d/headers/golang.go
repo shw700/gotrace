@@ -96,7 +96,7 @@ func runtime.getcallerpc/p() uintptr
 func runtime.getcallersp/p(argp unsafe.Pointer) uintptr
 
 //func Write(fd int, p []byte) (n int, err error)
-func syscall.Write(fd int, p *byte)
+func syscall.Write(fd int, p []byte) (n int, err error)
 
 func runtime.exit(code int32)
 func runtime.sleep(ms int32) int32
@@ -113,6 +113,7 @@ func errors.New(text string) error
 // Networking
 func runtime.netpoll(block bool) *g
 func net.IP.IsLoopback() bool
+func net.isZeros(p IP) bool
 func net.selfConnect(fd *netFD, err error) bool
 //func LookupPort(network, service string) (port int, err error
 func net.LookupPort(network string, service string) (port int, err error)
@@ -128,6 +129,8 @@ func net.SplitHostPort(hostport string) (host string, port string, err error)
 func net.xtoi(s string) (n int, i int, ok bool)
 func net.last(s string, b byte) int
 func net.ResolveTCPAddr(network string, address string) (*net.TCPAddr, error)
+func net.absDomainName(b []byte) string
+func net.IP.To4() IP
 //func net.ipToSockaddr(family int, ip IP, port int, zone string) (syscall.Sockaddr, error)
 func syscall.Connect(fd int, sa Sockaddr) (err error)
 func time.now() (sec int64, nsec int32, mono int64)
@@ -163,6 +166,9 @@ func runtime.releasep() *p
 func runtime.pidleput(_p_ *p)
 func runtime.readgstatus(gp *g) uint32
 func runtime.execute(gp *g, inheritTime bool)
+func runtime.procyield(cycles uint32)
+
+func runtime.findfunc(pc uintptr) funcInfo
 
 // Slices
 //func makeslice(et *_type, len, cap int) slice
@@ -173,3 +179,7 @@ func strings.IndexByte(s string, c byte)
 
 // Network
 func runtime.netpollinited() bool
+
+func runtime\internal\atomic.Load(ptr *uint32) uint32
+func runtime\internal\atomic.Load64(ptr *uint64) uint64
+func runtime\internal\atomic.Xchg(ptr *uint32, new uint32) uint32

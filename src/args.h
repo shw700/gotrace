@@ -25,7 +25,7 @@
 struct lt_config_shared;
 struct lt_symbol;
 
-#define LT_ARGS_DEF_POD_NUM	20
+#define LT_ARGS_DEF_POD_NUM	21
 
 enum {
 	LT_ARGS_DTYPE_POD = 1,
@@ -43,6 +43,7 @@ enum {
 	LT_ARGS_TYPEID_INT64,
 	LT_ARGS_TYPEID_UINT64,
 	LT_ARGS_TYPEID_CHAR,
+	LT_ARGS_TYPEID_INT8,
 	LT_ARGS_TYPEID_UINT8,
 	LT_ARGS_TYPEID_STRING,
 	LT_ARGS_TYPEID_BOOL,
@@ -195,8 +196,8 @@ int lt_args_buf_open(struct lt_config_shared *cfg, char *file);
 int lt_args_buf_close(struct lt_config_shared *cfg);
 struct lt_arg* lt_args_getarg(struct lt_config_shared *cfg, const char *type,
 				const char *name, int pointer, int create, char *enum_name);
-int lt_args_cb_arg(struct lt_config_shared *cfg, struct lt_arg *arg,
-			void *pval, struct lt_args_data *data, int last,
+int lt_args_cb_arg(struct lt_config_shared *cfg, pid_t pid, struct lt_arg *arg, void *pval,
+			size_t psize, struct lt_args_data *data, int last,
 			int dspname, int multi_fmt);
 int lt_args_cb_struct(struct lt_config_shared *cfg, int type,
 			struct lt_arg *arg, void *pval,

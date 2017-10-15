@@ -35,7 +35,7 @@ int launch_preprocessor = 0;
 %}
 
 alphnum		[-0-9a-zA-Z_]
-name		([-0-9a-zA-Z_\.|/])+|\.\.\.
+name		([-0-9a-zA-Z_\.|/|\\])+
 filename	([-0-9a-zA-Z\./_])+
 whitespace	([ \t])
 
@@ -78,6 +78,7 @@ whitespace	([ \t])
 "func"			{ return FUNC; }
 {name}[!~^]?(\/[opxduh])?	{ lt_args_lval.s = strdup(lt_args_text); return NAME; }
 "\*"+			{ lt_args_lval.s = strdup(lt_args_text); return POINTER; }
+"[]"			{ return SLICE; }
 ")"			{ return ')'; }
 "("			{ return '('; }
 "}"			{ return '}'; }

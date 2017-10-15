@@ -447,12 +447,12 @@ read_string_remote(pid_t pid, char *addr, size_t slen) {
 	return result;
 }
 
-static void* get_value(struct lt_config_shared *cfg, struct lt_arg *arg, pid_t target,
-	struct user_regs_struct *regs, size_t offset, int ret, size_t *next_off, int *err)
+static void *get_value(struct lt_config_shared *cfg, struct lt_arg *arg, pid_t target,
+	struct user_regs_struct *regs, size_t offset, size_t *psize, size_t *next_off, int *err)
 {
 //	void *pval = NULL;
 	long val, sp_off = regs->rsp;
-	size_t extra_off = 0;
+	size_t extra_off = 0, vsize = 0;
 	*err = 1;
 
 	/* Skip the return value for first parameter */
@@ -462,19 +462,43 @@ static void* get_value(struct lt_config_shared *cfg, struct lt_arg *arg, pid_t t
 	sp_off += offset + extra_off;
 
 	errno = 0;
-
 	val = ptrace(PTRACE_PEEKDATA, target, sp_off, 0);
 	if (errno != 0) {
 		perror("ptrace(PTRACE_PEEKDATA)");
 		return NULL;
 	}
 
+	// Deal with slice
+	if (arg->pointer == -1) {
+		unsigned long ssize;
+
+		errno = 0;
+		ssize = ptrace(PTRACE_PEEKDATA, target, sp_off+sizeof(void *), 0);
+		if (errno != 0) {
+			perror("ptrace(PTRACE_PEEKDATA)");
+			return NULL;
+		}
+
+		if (next_off)
+			*next_off = offset + extra_off + (sizeof(void *) * 2);
+
+		if (psize)
+			*psize = ssize;
+
+		*err = 0;
+		return (void *)val;
+	}
+
 	if (arg->type_id == LT_ARGS_TYPEID_STRING) {
 		char *str;
 		long slen;
 
-		if (!val)
+		if (!val) {
+			if (psize)
+				*psize = 0;
+
 			return strdup("");
+		}
 
 		errno = 0;
 
@@ -491,10 +515,14 @@ static void* get_value(struct lt_config_shared *cfg, struct lt_arg *arg, pid_t t
 		if (next_off)
 			*next_off = offset + extra_off + (sizeof(void *) * 2);
 
+		if (psize)
+			*psize = slen;
+
 		*err = 0;
 		return str;
 	}
 
+	// XXX: This conditional shouldn't be structured like this
 	if (next_off) {
 //		unsigned long oval=val;
 
@@ -502,14 +530,20 @@ static void* get_value(struct lt_config_shared *cfg, struct lt_arg *arg, pid_t t
 			*next_off = offset + sizeof(int32_t);
 			val >>= 32;
 			val &= 0x00000000ffffffff;
+			vsize = 4;
 		} else if ((arg->type_id == LT_ARGS_TYPEID_INT16 || (arg->type_id == LT_ARGS_TYPEID_UINT16))) {
 			*next_off = offset + sizeof(int16_t);
 			val >>= 48;
 			val &= 0x000000000000ffff;
+			vsize = 2;
 		} else {
 			*next_off = offset + extra_off + sizeof(void *);
+			vsize = sizeof(void *);
 		}
 	}
+
+	if (psize)
+		*psize = vsize;
 
 	*err = 0;
 	return (void *)val;
@@ -534,7 +568,7 @@ static void* get_value(struct lt_config_shared *cfg, struct lt_arg *arg, pid_t t
 
 /* Process structure stored completelly in the 
    memory - pointed to by 'pval' arg. */
-static int process_struct_mem(struct lt_config_shared *cfg, struct lt_arg *arg,
+/*static int process_struct_mem(struct lt_config_shared *cfg, struct lt_arg *arg,
 				void *pval, struct lt_args_data *data)
 {
 	struct lt_arg *a;
@@ -555,9 +589,9 @@ static int process_struct_mem(struct lt_config_shared *cfg, struct lt_arg *arg,
 	}
 
 	return 0;
-}
+}*/
 
-static int process_struct_arg(struct lt_config_shared *cfg, struct lt_arg *arg,
+/*static int process_struct_arg(struct lt_config_shared *cfg, struct lt_arg *arg,
 			void *regs, struct lt_args_data *data, int ret)
 {
 	struct lt_arg *a;
@@ -581,9 +615,9 @@ static int process_struct_arg(struct lt_config_shared *cfg, struct lt_arg *arg,
 	}
 
 	return 0;
-}
+}*/
 
-static void process_detailed_struct(struct lt_config_shared *cfg,
+/*static void process_detailed_struct(struct lt_config_shared *cfg,
 		struct lt_arg *arg, void *pval, struct lt_args_data *data, 
 		void *regs, int ret)
 {
@@ -598,7 +632,7 @@ static void process_detailed_struct(struct lt_config_shared *cfg,
 		else
 			process_struct_arg(cfg, arg, regs, data, ret);
 	}
-}
+}*/
 
 static void
 enter_transformer_callstack(char *symname, struct user_regs_struct *inregs, void **args, size_t argcnt, lt_tsd_t *tsd)
@@ -693,7 +727,7 @@ int lt_stack_process(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 			int is_err;
 
 //			size_t old = cur_off;
-			pval = get_value(cfg, arg, target, regs, cur_off, 0, &cur_off, &is_err);
+			pval = get_value(cfg, arg, target, regs, cur_off, NULL, &cur_off, &is_err);
 //			fprintf(stderr, "HEH: started with %zu, ended with %zu (%x)\n", old, cur_off
 			targs[i-1] = pval;
 		}
@@ -752,10 +786,11 @@ int lt_stack_process(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 
 	for(i = 1; i < asym->argcnt; i++) {
 		void *pval = NULL;
+		size_t psize;
 		struct lt_arg *arg = asym->args[i];
 		int last = (i + 1) == asym->argcnt, is_err;
 
-		pval = get_value(cfg, arg, target, regs, cur_off, 0, &cur_off, &is_err);
+		pval = get_value(cfg, arg, target, regs, cur_off, &psize, &cur_off, &is_err);
 
 		if (!is_err && arg->latrace_custom_struct_transformer && (!arg->fmt || !*(arg->fmt))) {
 			void *pvald = *((void**) pval);
@@ -783,7 +818,7 @@ int lt_stack_process(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 				left -= (cfg->fmt_colors ? seplen_color : 2);
 
 			if (tsd->fault_reason) {
-				fprintf(stderr, "Error: caught fatal condition in custom func transformer entry for %s: %s\n",
+				PRINT_ERROR("Error: caught fatal condition in custom func transformer entry for %s: %s\n",
 					asym->name, tsd->fault_reason);
 				tsd->fault_reason = NULL;
 			} else {
@@ -826,11 +861,11 @@ int lt_stack_process(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 			continue;
 		}
 
-		lt_args_cb_arg(cfg, arg, pval, data, last, 1, 0);
+		lt_args_cb_arg(cfg, target, arg, pval, psize, data, last, 1, 0);
 
-		if ((cfg->args_detailed) && 
+/*		if ((cfg->args_detailed) &&
 		    (LT_ARGS_DTYPE_STRUCT == arg->dtype))
-			process_detailed_struct(cfg, arg, pval, data, regs, 0);
+			process_detailed_struct(cfg, arg, pval, data, regs, 0);*/
 	}
 
 	return 0;
@@ -856,10 +891,11 @@ int lt_stack_process_ret(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 	}
 
 	for (i = 0; i < asym->rargcnt; i++) {
+		size_t psize;
 		int last = (i == asym->rargcnt-1), is_err;
 
 		arg = asym->ret_args[i];
-		pval = get_value(cfg, arg, target, regs, ret_offset, 1, &ret_offset, &is_err);
+		pval = get_value(cfg, arg, target, regs, ret_offset, &psize, &ret_offset, &is_err);
 
 /*		if (is_err) {
 			PRINT_ERROR("Unexpected error occurred decoding return value from function!");
@@ -888,7 +924,7 @@ int lt_stack_process_ret(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 			if (asym->args[LT_ARGS_RET]->latrace_custom_func_intercept) {
 
 				if (tsd->fault_reason) {
-					fprintf(stderr, "Error: caught fatal condition in custom func intercept exit for %s: %s\n",
+					PRINT_ERROR("Error: caught fatal condition in custom func intercept exit for %s: %s\n",
 						asym->name, tsd->fault_reason);
 					tsd->fault_reason = NULL;
 				} else
@@ -899,7 +935,7 @@ int lt_stack_process_ret(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 			if (!silent && asym->args[LT_ARGS_RET]->latrace_custom_func_transformer) {
 
 				if (tsd->fault_reason) {
-					fprintf(stderr, "Error: caught fatal condition in custom func transformer exit for %s: %s\n",
+					PRINT_ERROR("Error: caught fatal condition in custom func transformer exit for %s: %s\n",
 						asym->name, tsd->fault_reason);
 					tsd->fault_reason = NULL;
 				} else {
@@ -913,7 +949,7 @@ int lt_stack_process_ret(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 				(!asym->args[LT_ARGS_RET]->fmt || !*(asym->args[LT_ARGS_RET]->fmt))) {
 
 				if (tsd->fault_reason) {
-					fprintf(stderr, "Error: caught fatal condition in custom struct transformer exit for %s: %s\n",
+					PRINT_ERROR("Error: caught fatal condition in custom struct transformer exit for %s: %s\n",
 						asym->name, tsd->fault_reason);
 					tsd->fault_reason = NULL;
 				} else {
@@ -942,11 +978,11 @@ int lt_stack_process_ret(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 			if ((asym->rargcnt == 1) && (arg == asym->ret_args[0]))
 				dspname = 0;
 
-			lt_args_cb_arg(cfg, arg, pval, data, last, dspname, 1);
+			lt_args_cb_arg(cfg, target, arg, pval, psize, data, last, dspname, 1);
 		}
 
-		if ((cfg->args_detailed) && (LT_ARGS_DTYPE_STRUCT == arg->dtype))
-			process_detailed_struct(cfg, arg, pval, data, regs, 0);
+/*		if ((cfg->args_detailed) && (LT_ARGS_DTYPE_STRUCT == arg->dtype))
+			process_detailed_struct(cfg, arg, pval, data, regs, 0);*/
 
 	}
 
