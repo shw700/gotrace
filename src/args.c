@@ -1588,8 +1588,16 @@ static int getstr_pod(struct lt_config_shared *cfg, pid_t pid, int dspname, stru
 			goto out;
 		}
 
-		if ((s = read_string_remote(pid, pval, psize)))
+		if ((s = read_string_remote(pid, pval, psize))) {
+			if (!psize) {
+				len = snprintf(argbuf, alen, "%s%s[%zu]{}", d1, d2, psize);
+				// XXX: this should not be a crash! */
+//				XFREE(s);
+				goto out;
+			}
+
 			ms = massage_string((unsigned char *)s, psize);
+		}
 
 		if (!ms)
 			len = snprintf(argbuf, alen, "%s%s[%zu]{[..decoding error..]}", d1, d2, psize);

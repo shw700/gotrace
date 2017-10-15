@@ -67,6 +67,8 @@ func runtime.atomicstorep(ptr unsafe.Pointer, new unsafe.Pointer)
 
 //func casp(ptr *unsafe.Pointer, old, new unsafe.Pointer) bool
 func runtime.casp(ptr *unsafe.Pointer, old unsafe.Pointer, new unsafe.Pointer) bool
+//func casgstatus(gp *g, oldval, newval uint32)
+func runtime.casgstatus(gp *g, oldval uint32, newval uint32)
 
 // func mmap(addr unsafe.Pointer, n uintptr, prot, flags, fd int32, off uint32) unsafe.Pointer
 func runtime.mmap(addr uintptr, n uintptr, prot/om int32=mmap_prot, flags/x int32, fd int32, off uint32) unsafe.Pointer
@@ -130,8 +132,15 @@ func net.last(s string, b byte) int
 func net.ResolveTCPAddr(network string, address string) (*net.TCPAddr, error)
 func net.absDomainName(b []byte) string
 func net.IP.To4() IP
+func net.parseLiteralIP(addr string) string
+//func (ip IP) String() string
+func net.IP.String() string
+func net.appendHex(dst []byte, i uint32) []byte
 //func net.ipToSockaddr(family int, ip IP, port int, zone string) (syscall.Sockaddr, error)
 func syscall.Connect(fd int, sa Sockaddr) (err error)
+//func setDefaultSockopts(s, family, sotype int, ipv6only bool) error {
+func net.setDefaultSockopts(s int, family int, sotype int, ipv6only bool) error
+
 func time.now() (sec int64, nsec int32, mono int64)
 
 func runtime/internal/atomic.Load(ptr *uint32) uint32

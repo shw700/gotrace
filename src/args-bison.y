@@ -358,7 +358,7 @@ NAME POINTER NAME ENUM_REF
 
 	if (NULL == (arg = lt_args_getarg(scfg, $3, $1, ptrno, 1, $4))) {
 		if (NULL == (arg = lt_args_getarg(scfg, "void", $1, ptrno, 1, $4)))
-			ERROR("unknown argument type[3] - %s\n", $3);
+			ERROR("unknown argument type[3a] - %s\n", $3);
 	}
 
 	arg->real_type_name = strdup($3);
@@ -370,7 +370,17 @@ NAME SLICE NAME
 	struct lt_arg *arg;
 
 	if (NULL == (arg = lt_args_getarg(scfg, $3, $1, -1 /* slice */, 1, NULL)))
-		ERROR("unknown argument type[3] - %s\n", $3);
+		ERROR("unknown argument type[3b] - %s\n", $3);
+
+	$$ = arg;
+}
+|
+SLICE NAME
+{
+	struct lt_arg *arg;
+
+	if (NULL == (arg = lt_args_getarg(scfg, $2, ANON_PREFIX_INTERNAL, -1 /* slice */, 1, NULL)))
+		ERROR("unknown argument type[3c] - %s\n", $2);
 
 	$$ = arg;
 }
