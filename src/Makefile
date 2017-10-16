@@ -38,6 +38,7 @@ GOTRACE_OBJS=\
 	src/serializer.o \
 	src/network.o \
 	src/misc.o \
+	src/ld.o \
 	src/sysdeps/$(CONFIG_SYSDEP_DIR)/stack.o
 
 OBJS+=$(GOTRACE_OBJS) $(GOMOD_OBJS)

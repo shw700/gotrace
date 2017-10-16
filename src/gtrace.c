@@ -91,7 +91,6 @@ int call_remote_intercept(pid_t pid, char **funcnames, unsigned long *addresses,
 void start_listener(void);
 void *gotrace_socket_loop(void *param);
 
-void dump_wait_state(pid_t pid, int status, int force);
 int set_all_intercepts(pid_t pid);
 int set_intercept(pid_t pid, void *addr);
 int set_ret_intercept(pid_t pid, const char *fname, void *addr, size_t *pidx);
@@ -687,8 +686,8 @@ dump_wait_state(pid_t pid, int status, int force) {
 
 	// PTRACE_O_TRACESYSGOOD?
 	if (WSTOPSIG(status) & 0x80) {
-		PRINT_ERROR("%s", "Unchecked delivery of SIGTRAP|0x80. Aborting.\n");
-		exit(EXIT_FAILURE);
+		PRINT_ERROR("%s", "Warning: unchecked delivery of SIGTRAP|0x80\n");
+//		exit(EXIT_FAILURE);
 	}
 
 	return;
@@ -989,6 +988,39 @@ print_instruction(pid_t pid, void *addr, size_t len) {
 }
 
 int
+check_child_execute(pid_t pid) {
+	struct user_regs_struct regs;
+	int wait_status;
+
+	if (ptrace(PTRACE_SYSCALL, pid, NULL, NULL) == -1)
+	{
+		perror_pid("ptrace(PTRACE_SYSCALL)", pid);
+		return -1;
+	}
+
+	if (waitpid(pid, &wait_status, 0) == -1)
+	{
+		perror_pid("waitpid", pid);
+		return -1;
+	}
+
+	if (!WIFSTOPPED(wait_status) || ((WSTOPSIG(wait_status) & ~0x80) != SIGTRAP)) {
+		PRINT_ERROR("Unexpected error: process %d did not return with trace trap\n", pid);
+		return -1;
+	}
+
+	if (ptrace(PTRACE_GETREGS, pid, 0, &regs) == -1) {
+		perror_pid("ptrace(PTRACE_GETREGS)", pid);
+		return -1;
+	}
+
+	if (regs.orig_rax != SYS_execve)
+		return 0;
+
+	return 1;
+}
+
+int
 trace_program(const char *progname, char * const *args) {
 	pid_t pid;
 	int wait_status;
@@ -1040,7 +1072,28 @@ trace_program(const char *progname, char * const *args) {
 	dump_wait_state(pid, wait_status, 0);
 	handle_trace_trap(pid, wait_status, 1);
 
-	printf("Parent detected possible exec\n");
+	fprintf(stderr, "Parent detected possible exec\n");
+
+	switch(check_child_execute(pid)) {
+		case -1:
+			PRINT_ERROR("%s", "Error occurred checking child execution state\n");
+			break;
+		case 0:
+			PRINT_ERROR("%s", "Warning: child notified parent but was not in execution state\n");
+			break;
+		default: {
+/*			signed long mmr;
+
+			mmr = call_remote_mmap(pid, NULL, 8192, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, 0, 0);
+			fprintf(stderr, "Remote mmap() return: %lx\n", mmr);
+			if (mmr < 0) {
+				errno = -(mmr);
+				PERROR("mmap");
+			}*/
+
+			break;
+		}
+	}
 
 /*	if (set_all_intercepts(pid) < 0) {
 		PRINT_ERROR("%s", "Error encountered while setting intercepts.\n");

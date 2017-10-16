@@ -32,7 +32,6 @@
 #include <unistd.h>
 #include <sys/mman.h>
 #include <errno.h>
-#include <search.h>
 #include <sys/user.h>
 
 #include "list.h"
@@ -267,6 +266,14 @@ size_t make_jmp_buf(unsigned long from, unsigned long to, void *buf, size_t bufl
 
 /* arch specific */
 char *read_string_remote(pid_t pid, char *addr, size_t slen);
+
+/* dynamic linker */
+int open_dso_and_get_segments(const char *soname);
+unsigned long call_remote_mmap(pid_t pid, void *addr, size_t length, int prot, int flags, int fd, off_t offset);
+int call_remote_mprotect(pid_t pid, void *addr, size_t len, int prot);
+
+void dump_wait_state(pid_t pid, int status, int force);
+
 
 
 #define PRINT(fmt, args...) \
