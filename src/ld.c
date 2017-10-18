@@ -2,7 +2,9 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <signal.h>
+#include <limits.h>
 #include <dlfcn.h>
+#include <link.h>
 #include <elf.h>
 #include <setjmp.h>
 #include <sys/types.h>
@@ -29,6 +31,92 @@ print_regs(pid_t pid) {
 		(void *)regs.rdi, (void *)regs.rsi, (void *)regs.rdx,
 		(void *)regs.r10, (void *)regs.r8, (void *)regs.r9);
 	return;
+}
+
+uintptr_t
+call_remote_lib_func(pid_t pid, void *faddr, uintptr_t r1, uintptr_t r2, uintptr_t r3, uintptr_t r4,
+		uintptr_t r5, uintptr_t r6) {
+	struct user_regs_struct oregs, nregs;
+	unsigned long saved_i, call_i;
+	unsigned char *iptr;
+	int wait_status, err = 0;
+
+	// Step #1. Save the current registers and instruction.
+	if (ptrace(PTRACE_GETREGS, pid, 0, &oregs) == -1) {
+		perror_pid("ptrace(PTRACE_GETREGS)", pid);
+		return -1;
+	}
+
+	errno = 0;
+	saved_i = ptrace(PTRACE_PEEKTEXT, pid, oregs.rip, 0);
+	if (errno != 0) {
+		perror_pid("ptrace(PTRACE_PEEKTEXT)", pid);
+		return -1;
+	}
+
+	// Step #2. Replace the registers with the function parameters and
+	// prime the instruction pointer to call the library function
+	memset(&call_i, 0xcc, sizeof(call_i));
+	iptr = (unsigned char *)&call_i;
+	// What we have is the call to *%rbx followed by a trap landing pad.
+	*iptr++ = 0xff;
+	*iptr++ = 0xd3;
+
+	if (ptrace(PTRACE_POKETEXT, pid, oregs.rip, call_i) == -1) {
+		perror_pid("ptrace(PTRACE_POKETEXT)", pid);
+		return -1;
+	}
+
+	memcpy(&nregs, &oregs, sizeof(nregs));
+	nregs.rdi = r1;
+	nregs.rsi = r2;
+	nregs.rdx = r3;
+	nregs.rcx = r4;
+	nregs.r8 = r5;
+	nregs.r9 = r6;
+	nregs.rbx = (unsigned long)faddr;
+
+	if (ptrace(PTRACE_SETREGS, pid, 0, &nregs) == -1) {
+		perror_pid("ptrace(PTRACE_SETREGS)", pid);
+		return -1;
+	}
+
+	// Step #3. Call into the library and wait for the return.
+	if (ptrace(PTRACE_CONT, pid, NULL, NULL) == -1) {
+		perror_pid("ptrace(PTRACE_CONT)", pid);
+		return -1;
+	} else if (waitpid(pid, &wait_status, 0) == -1) {
+		perror_pid("waitpid", pid);
+		err = 1;
+	} else if (!WIFSTOPPED(wait_status) || (WSTOPSIG(wait_status) != SIGTRAP)) {
+		PRINT_ERROR("Unexpected error: process %d did not return with trace trap\n", pid);
+		dump_wait_state(pid, wait_status, 1);
+		dump_instruction_state(pid);
+		err = 1;
+	}
+
+	if (!err && (ptrace(PTRACE_GETREGS, pid, 0, &nregs) == -1)) {
+		perror_pid("ptrace(PTRACE_GETREGS)", pid);
+		err = 1;
+	}
+
+	// Step #4. Restore the original registers and instruction and continue.
+	if (ptrace(PTRACE_POKETEXT, pid, oregs.rip, saved_i) == -1) {
+		perror_pid("ptrace(PTRACE_POKETEXT)", pid);
+		return -1;
+	}
+
+	if (ptrace(PTRACE_SETREGS, pid, 0, &oregs) == -1) {
+		perror_pid("ptrace(PTRACE_GETREGS)", pid);
+		return -1;
+	}
+
+	if (err)
+		return -1;
+
+	fprintf(stderr, "+++  Remote library call returning: %llx\n", nregs.rax);
+
+	return nregs.rax;
 }
 
 unsigned long
@@ -82,8 +170,8 @@ call_remote_syscall(pid_t pid, int syscall_no, unsigned long r1, unsigned long r
 	// Step #3. Run the syscall and get the result.
 	// First step into the syscall.
 	if (ptrace(PTRACE_SYSCALL, pid, NULL, NULL) == -1) {
-			perror_pid("ptrace(PTRACE_SYSCALL)", pid);
-			return -1;
+		perror_pid("ptrace(PTRACE_SYSCALL)", pid);
+		return -1;
 	} else if (waitpid(pid, &wait_status, 0) == -1) {
 		perror_pid("waitpid", pid);
 		err = 1;
@@ -120,9 +208,110 @@ call_remote_syscall(pid_t pid, int syscall_no, unsigned long r1, unsigned long r
 	if (err)
 		return -1;
 
-	fprintf(stderr, "Remote syscall returning: %llx\n", nregs.rax);
+	fprintf(stderr, "+++  Remote syscall returning: %llx\n", nregs.rax);
 
 	return nregs.rax;
+}
+
+unsigned long
+get_fs_base_remote(pid_t pid) {
+	unsigned long saved_i, syscall_i, fs_result;
+	unsigned char *iptr;
+	struct user_regs_struct oregs, nregs;
+	int wait_status, err = 0;
+
+	// Step #1. Save the current registers and instruction.
+	if (ptrace(PTRACE_GETREGS, pid, 0, &oregs) == -1) {
+		perror_pid("ptrace(PTRACE_GETREGS)", pid);
+		return -1;
+	}
+
+	errno = 0;
+	saved_i = ptrace(PTRACE_PEEKTEXT, pid, oregs.rip, 0);
+	if (errno != 0) {
+		perror_pid("ptrace(PTRACE_PEEKTEXT)", pid);
+		return -1;
+	}
+
+	// Step #2. Replace the registers with syscall parameters and
+	// prime the instruction pointer to call the syscall
+	memset(&syscall_i, 0xcc, sizeof(syscall_i));
+	iptr = (unsigned char *)&syscall_i;
+	// What we have is the "syscall" instruction followed by a trap landing pad.
+	*iptr++ = 0x0f;
+	*iptr++ = 0x05;
+
+	if (ptrace(PTRACE_POKETEXT, pid, oregs.rip, syscall_i) == -1) {
+		perror_pid("ptrace(PTRACE_POKETEXT)", pid);
+		return -1;
+	}
+
+	memcpy(&nregs, &oregs, sizeof(nregs));
+	nregs.rax = SYS_arch_prctl;
+//	nregs.rdi = ARCH_SET_FS;
+	nregs.rdi = 0x1002;
+	nregs.rsi = oregs.rsp - sizeof(void *);
+
+	if (ptrace(PTRACE_SETREGS, pid, 0, &nregs) == -1) {
+		perror_pid("ptrace(PTRACE_SETREGS)", pid);
+		return -1;
+	}
+
+	// Step #3. Run the syscall and get the result.
+	// First step into the syscall.
+	if (ptrace(PTRACE_SYSCALL, pid, NULL, NULL) == -1) {
+		perror_pid("ptrace(PTRACE_SYSCALL)", pid);
+		return -1;
+	} else if (waitpid(pid, &wait_status, 0) == -1) {
+		perror_pid("waitpid", pid);
+		err = 1;
+	} else if (!WIFSTOPPED(wait_status) || ((WSTOPSIG(wait_status) & ~0x80) != SIGTRAP)) {
+		PRINT_ERROR("Unexpected error: process %d did not return with trace trap\n", pid);
+		err = 1;
+	} else if (ptrace(PTRACE_SYSCALL, pid, NULL, NULL) == -1) {
+		perror_pid("ptrace(PTRACE_SYSCALL)", pid);
+		err = 1;
+	} else if (waitpid(pid, &wait_status, 0) == -1) {
+		perror_pid("waitpid", pid);
+		err = 1;
+	} else if (!WIFSTOPPED(wait_status) || ((WSTOPSIG(wait_status) & ~0x80) != SIGTRAP)) {
+		PRINT_ERROR("Unexpected error: process %d did not return with trace trap\n", pid);
+		err = 1;
+	}
+
+	if (!err && (ptrace(PTRACE_GETREGS, pid, 0, &nregs) == -1)) {
+		perror_pid("ptrace(PTRACE_GETREGS)", pid);
+		err = 1;
+	}
+
+	// Step #4. Restore the original registers and instruction and continue.
+	if (ptrace(PTRACE_POKETEXT, pid, oregs.rip, saved_i) == -1) {
+		perror_pid("ptrace(PTRACE_POKETEXT)", pid);
+		return -1;
+	}
+
+	if (ptrace(PTRACE_SETREGS, pid, 0, &oregs) == -1) {
+		perror_pid("ptrace(PTRACE_GETREGS)", pid);
+		return -1;
+	}
+
+	if (err)
+		return -1;
+
+	if (nregs.rax != 0) {
+		fprintf(stderr, "+++  Remote read fs base returning error: %llx\n", nregs.rax);
+		return nregs.rax;
+	}
+
+	errno = 0;
+	fs_result = ptrace(PTRACE_PEEKDATA, pid, oregs.rsp - sizeof(void *), 0);
+	if (errno != 0) {
+		perror_pid("ptrace(PTRACE_PEEKDATA)", pid);
+		return -1;
+	}
+
+	fprintf(stderr, "+++  Remote read fs base returning: %lx\n", fs_result);
+	return fs_result;
 }
 
 unsigned long
@@ -148,7 +337,54 @@ school_bus(int signo) {
 }
 
 void *
-get_remote_vma(unsigned long base, size_t size, int prot, void *fixed) {
+get_remote_vma(pid_t pid, unsigned long base, size_t size, int prot, void *fixed) {
+	void *vma, *mbase = NULL;
+	int map_flags = MAP_ANONYMOUS | MAP_PRIVATE;
+
+	if (fixed) {
+		mbase = fixed;
+		map_flags |= MAP_FIXED;
+	}
+
+	if ((vma = (void *)call_remote_mmap(pid, mbase, size, prot | PROT_WRITE | PROT_READ, map_flags, 0, 0)) == MAP_FAILED) {
+		// XXX: won't really work
+		perror_pid("mmap", pid);
+		return NULL;
+	}
+
+	// XXX: This should probably be working.
+//	memset(vma, 0, size);
+
+	fprintf(stderr, "Trying to make remote mmap(): %p to %p (%zu)\n", vma, vma+size, size);
+
+	if (!(prot & PROT_READ)) {
+		if (mprotect((void *)base, size, prot|PROT_READ) == -1) {
+			PERROR("mprotect");
+			return NULL;
+		}
+	}
+
+	// XXX: restore this?
+
+	if (write_bytes_remote(pid, vma, (void *)base, size) < 0) {
+		PRINT_ERROR("%s", "Error copying DSO data to remote buffer\n");
+		return NULL;
+	}
+
+	if (!(prot & PROT_WRITE)) {
+		if (call_remote_mprotect(pid, vma, size, prot) == -1) {
+			PERROR("mprotect");
+			return NULL;
+		}
+
+	}
+
+	return vma;
+}
+
+
+void *
+get_local_vma(unsigned long base, size_t size, int prot, void *fixed) {
 	void *vma, *mbase = NULL;
 	int failed = 0;
 	int map_flags = MAP_ANONYMOUS | MAP_PRIVATE;
@@ -165,18 +401,16 @@ get_remote_vma(unsigned long base, size_t size, int prot, void *fixed) {
 
 	memset(vma, 0, size);
 
-	printf("Trying: %p to %p (%zu)\n", (void *)base, (void *)base+size, size);
-	fflush(stdout);
+	fprintf(stderr, "Trying local mmap(): %p to %p (%zu)\n", (void *)base, (void *)base+size, size);
 
 	if (!(prot & PROT_READ)) {
-		fprintf(stderr, "HMM\n");
 		if (mprotect((void *)base, size, prot|PROT_READ) == -1) {
 			PERROR("mprotect");
 			return NULL;
 		}
 	}
 
-	fprintf(stderr, "%s", "memcpy 1\n");
+//	fprintf(stderr, "%s", "memcpy 1\n");
 
 	if (sigsetjmp(jb, 1)) {
 		PRINT_ERROR("%s", "Error detected in sigsetjmp\n");
@@ -184,8 +418,8 @@ get_remote_vma(unsigned long base, size_t size, int prot, void *fixed) {
 	}
 
 	if (!failed) {
-		memcpy(vma, (void *)base, size-1);
-		fprintf(stderr, "%s", "memcpy 2\n");
+		memcpy(vma, (void *)base, size);
+//		fprintf(stderr, "%s", "memcpy 2\n");
 	} else
 		PRINT_ERROR("%s", "Recovering from failure.\n");
 
@@ -344,39 +578,58 @@ typedef struct vmap_region {
 
 
 int
-open_dso_and_get_segments(const char *soname) {
+open_dso_and_get_segments(const char *soname, pid_t pid) {
 	vmap_region_t vmas[MAX_VMA];
 	FILE *f;
-	void *dladdr, *ep, *init_func;
-	char realname[1024];
-	char execbuf[128], execbuf2[128];
+	void *dladdr, *ep, *init_func, *ofunc;
+	char realname[PATH_MAX+1];
+//	char execbuf[128], execbuf2[128];
 	size_t vind = 0, i;
+	int no_load = 0;
 
-	sprintf(execbuf, "echo 1; cat /proc/%d/maps | grep libgomod", getpid());
-	sprintf(execbuf2, "echo 2; cat /proc/%d/maps | grep libgomod", getpid());
+//	sprintf(execbuf, "echo 1; cat /proc/%d/maps | grep libgomod", getpid());
+//	sprintf(execbuf2, "echo 2; cat /proc/%d/maps | grep libgomod", getpid());
 
 	signal(SIGBUS, school_bus);
 
 	memset(realname, 0, sizeof(realname));
 
-	if (readlink(soname, realname, sizeof(realname)) == -1) {
-		if (errno == EINVAL)
-			strncpy(realname, soname, sizeof(realname));
-		else {
-			PERROR("readlink");
+	if (*soname != '/') {
+		struct link_map *lm;
+
+		if (!(dladdr = dlopen(soname, RTLD_NOW | RTLD_NOLOAD))) {
+			PRINT_ERROR("dlopen(): %s\n", dlerror());
 			return -1;
 		}
+
+		if (dlinfo(dladdr, RTLD_DI_LINKMAP, &lm) == -1) {
+			PRINT_ERROR("dlinfo(): %s\n", dlerror());
+			return -1;
+		}
+
+		soname = lm->l_name;
+		no_load = 1;
 	}
 
-	ep = get_entry_point(realname);
-	fprintf(stderr, "Entry point: %p\n", ep);
+	if (!(realpath(soname, realname))) {
+		PERROR("realpath");
+		return -1;
+	}
 
-	if (!(dladdr = dlopen(realname, RTLD_NOW | RTLD_DEEPBIND))) {
+//	PRINT_ERROR("REAL NAME: [%s]\n", realname);
+
+//	ep = get_entry_point(realname);
+//	fprintf(stderr, "Entry point: %p\n", ep);
+
+	if (!no_load && (!(dladdr = dlopen(realname, RTLD_NOW | RTLD_DEEPBIND)))) {
 		PRINT_ERROR("dlopen(): %s\n", dlerror());
 		return -1;
 	}
 
 	init_func = dlsym(dladdr, "_gomod_init");
+//	ofunc = dlsym(dladdr, "getpid");
+//	PRINT_ERROR("init_func() = %p\n", init_func);
+//	PRINT_ERROR("other func() = %p\n", ofunc);
 
 	if ((f = fopen("/proc/self/maps", "r")) == NULL) {
 		perror_pid("fopen(/proc/self/maps", 0);
@@ -464,13 +717,13 @@ open_dso_and_get_segments(const char *soname) {
 
 	}
 
-	system(execbuf);
+//	system(execbuf);
 
 	for (i = 0; i < vind; i++) {
 		void *v;
 
 		fprintf(stderr, "HEH: %lx -> %lx\n", vmas[i].start, vmas[i].end);
-		v = get_remote_vma(vmas[i].start, vmas[i].end-vmas[i].start, vmas[i].prot, NULL);
+		v = get_local_vma(vmas[i].start, vmas[i].end-vmas[i].start, vmas[i].prot, NULL);
 		vmas[i].new_base = v;
 		PRINT_ERROR("v = %p\n", v);
 	}
@@ -478,23 +731,22 @@ open_dso_and_get_segments(const char *soname) {
 	if (dlclose(dladdr) == -1)
 		PRINT_ERROR("dlclose(): %s\n", dlerror());
 
-	fprintf(stderr, "Shop all closed up\n");
-	system(execbuf2);
-
-	fprintf(stderr, "\n\n\nFINAL PUSH\n");
 	for (i = 0; i < vind; i++) {
 		void *v2;
 
 		fprintf(stderr, "NOW: %p\n", vmas[i].new_base);
-		v2 = get_remote_vma((unsigned long)vmas[i].new_base, vmas[i].end-vmas[i].start, vmas[i].prot, (void *)vmas[i].start);
+		v2 = get_remote_vma(pid, (unsigned long)vmas[i].new_base, vmas[i].end-vmas[i].start, vmas[i].prot, (void *)vmas[i].start);
 		PRINT_ERROR("v2 = %p\n", v2);
 	}
-	system(execbuf);
+
+//	system(execbuf);
 
 /*	void (*ffunc)(void);
-	ffunc = (void *)init_func;
-	fprintf(stderr, "About to call init func: %p\n", ffunc);
-	ffunc();*/
+	ffunc = (void *)ofunc;
+	fprintf(stderr, "About to call printf: %p\n", ffunc);
+//	int rr = call_remote_lib_func(pid, ffunc, "Hello world\n", 0, 0, 0, 0, 0);
+	int rr = call_remote_lib_func(pid, ffunc, 666, 0, 0, 0, 0, 0);
+	fprintf(stderr, "rr = %d\n", rr);*/
 
 
 	return 0;

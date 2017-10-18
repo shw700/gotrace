@@ -4,7 +4,6 @@
 #include <unistd.h>
 #include <stddef.h>
 #include <sys/ptrace.h>
-#include <sys/prctl.h>
 #include <signal.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -13,6 +12,8 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <pthread.h>
+#include <asm/prctl.h>
+#include <sys/prctl.h>
 
 // TODO: waitpid(..., WUNTRACED), _WALL
 
@@ -83,6 +84,7 @@ char *excluded_intercepts[] = {
 };
 
 char *read_bytes_remote(pid_t pid, char *addr, size_t slen);
+int write_bytes_remote(pid_t pid, void *addr, void *buf, size_t blen);
 void print_instruction(pid_t pid, void *addr, size_t len);
 
 void *call_remote_func(pid_t pid, unsigned char reqtype, void *data, size_t dsize, size_t *psize);
@@ -952,6 +954,46 @@ read_bytes_remote(pid_t pid, char *addr, size_t slen) {
 	return result;
 }
 
+int write_bytes_remote(pid_t pid, void *addr, void *buf, size_t blen) {
+	unsigned char *wptr = (unsigned char *)addr;
+	unsigned char *rptr = (unsigned char *)buf;
+	size_t nwritten = 0;
+
+	while (nwritten < blen) {
+		unsigned long wword;
+
+		// If less than a word remaining, we have to rewrite part of the current contents
+		if ((blen - nwritten) < sizeof(void *)) {
+			unsigned long oval;
+
+//			fprintf(stderr, "XXX: %zu bytes left in write\n", blen-nwritten);
+
+			errno = 0;
+			oval = ptrace(PTRACE_PEEKDATA, pid, wptr, 0);
+			if (errno != 0) {
+				perror_pid("ptrace(PTRACE_PEEKDATA)", pid);
+				return -1;
+			}
+
+			memcpy(&wword, &oval, sizeof(oval));
+			memcpy(&wword, rptr, (blen - nwritten));
+		} else {
+			memcpy(&wword, rptr, sizeof(wword));
+		}
+
+		if (ptrace(PTRACE_POKEDATA, pid, wptr, wword) == -1) {
+			perror_pid("ptrace(PTRACE_POKEDATA)", pid);
+			return -1;
+		}
+
+		nwritten += sizeof(void *);
+		wptr += sizeof(void *);
+		rptr += sizeof(void *);
+	}
+
+	return 0;
+}
+
 void
 print_instruction(pid_t pid, void *addr, size_t len) {
 	ZydisFormatter formatter;
@@ -1020,6 +1062,75 @@ check_child_execute(pid_t pid) {
 	return 1;
 }
 
+void
+dump_instruction_state(pid_t pid) {
+	struct user_regs_struct regs;
+	siginfo_t si;
+	Dl_info ainfo, iinfo;
+	int r_addr = 0, r_pc = 0;
+
+	if (ptrace(PTRACE_GETSIGINFO, pid, 0, &si) < 0)
+		perror_pid("ptrace(PTRACE_GETSIGINFO)", pid);
+	else if (ptrace(PTRACE_GETREGS, pid, 0, &regs) < 0) {
+		perror_pid("ptrace(PTRACE_GETREGS)", pid);
+		PRINT_ERROR("%s occurred at address: %p\n", strsignal(si.si_signo), si.si_addr);
+		r_addr = dladdr((void *)si.si_addr, &ainfo) != 0;
+	} else {
+		PRINT_ERROR("%s occurred at address %p / PC %p\n",
+			strsignal(si.si_signo), si.si_addr, (void *)regs.rip);
+		print_instruction(pid, (void *)regs.rip, 16);
+		r_addr = dladdr((void *)si.si_addr, &ainfo) != 0;
+		r_pc = dladdr((void *)regs.rip, &iinfo) != 0;
+	}
+
+	if (r_addr || r_pc) {
+		if (r_addr)
+			PRINT_ERROR("Possible address match: %s (%s)    ",
+				ainfo.dli_sname, ainfo.dli_fname);
+		if (r_pc)
+			PRINT_ERROR("Possible PC match: %s (%s)",
+				iinfo.dli_sname, iinfo.dli_fname);
+
+		PRINT_ERROR("%s", "\n");
+	}
+
+//	PRINT_ERROR("%%fs base = %p\n", (void *)regs.fs_base);
+
+	return;
+}
+
+void
+dump_fs_addr(pid_t pid) {
+	struct user_regs_struct regs;
+
+	if (ptrace(PTRACE_GETREGS, pid, 0, &regs) < 0) {
+		perror_pid("ptrace(PTRACE_GETREGS)", pid);
+		return;
+	}
+
+	PRINT_ERROR("fs_base = %p\n", (void *)regs.fs_base);
+	return;
+}
+
+int
+set_fs_base_remote(pid_t pid, unsigned long base) {
+	struct user_regs_struct regs;
+
+	if (ptrace(PTRACE_GETREGS, pid, 0, &regs) < 0) {
+		perror_pid("ptrace(PTRACE_GETREGS)", pid);
+		return -1;
+	}
+
+	regs.fs_base = base;
+
+	if (ptrace(PTRACE_SETREGS, pid, 0, &regs) < 0) {
+		perror_pid("ptrace(PTRACE_SETREGS)", pid);
+		return -1;
+	}
+
+	return 0;
+}
+
 int
 trace_program(const char *progname, char * const *args) {
 	pid_t pid;
@@ -1082,14 +1193,26 @@ trace_program(const char *progname, char * const *args) {
 			PRINT_ERROR("%s", "Warning: child notified parent but was not in execution state\n");
 			break;
 		default: {
-/*			signed long mmr;
+/*			signed long mmr, fs_addr;
+			int res;
 
-			mmr = call_remote_mmap(pid, NULL, 8192, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, 0, 0);
-			fprintf(stderr, "Remote mmap() return: %lx\n", mmr);
-			if (mmr < 0) {
-				errno = -(mmr);
-				PERROR("mmap");
-			}*/
+			fs_addr = call_remote_mmap(pid, NULL, 65536, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, 0, 0);
+			if (fs_addr < 0) {
+				errno = -(fs_addr);
+				PERROR("mmap(fs_addr)");
+				exit(EXIT_FAILURE);
+			}
+
+//			res = call_remote_syscall(pid, SYS_arch_prctl, ARCH_SET_FS, fs_addr+32767, 0, 0, 0, 0);
+
+			if (set_fs_base_remote(pid, (unsigned long)fs_addr+32767) < 0) {
+				PRINT_ERROR("%s", "Error encountered setting up thread block in remote process\n");
+				exit(EXIT_FAILURE);
+			}
+
+			res = open_dso_and_get_segments("libc.so.6", pid);
+			fprintf(stderr, "LIBC result: %d\n", res);
+			exit(-1);*/
 
 			break;
 		}
@@ -1149,20 +1272,9 @@ trace_program(const char *progname, char * const *args) {
 			PRINT_ERROR("%s", "Error: something bad happened while handling trace trap\n");
 
 			if (WIFSTOPPED(wait_status) && (WSTOPSIG(wait_status) == SIGSEGV)) {
-				struct user_regs_struct regs;
-				siginfo_t si;
 				static int scnt = 0;
 
-				if (ptrace(PTRACE_GETSIGINFO, cpid, 0, &si) < 0)
-					perror_pid("ptrace(PTRACE_GETSIGINFO)", cpid);
-				else if (ptrace(PTRACE_GETREGS, cpid, 0, &regs) < 0) {
-					perror_pid("ptrace(PTRACE_GETREGS)", cpid);
-					PRINT_ERROR("SIGSEGV occurred at address: %p\n", si.si_addr);
-				} else {
-					PRINT_ERROR("SIGSEGV occurred at address %p / PC %p\n",
-						si.si_addr, (void *)regs.rip);
-					print_instruction(cpid, (void *)regs.rip, 16);
-				}
+				dump_instruction_state(cpid);
 
 				if (ptrace(PTRACE_DETACH, cpid, NULL, NULL) == -1) {
 					perror_pid("ptrace(PTRACE_DETACH)", cpid);

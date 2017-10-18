@@ -267,12 +267,18 @@ size_t make_jmp_buf(unsigned long from, unsigned long to, void *buf, size_t bufl
 /* arch specific */
 char *read_string_remote(pid_t pid, char *addr, size_t slen);
 
-/* dynamic linker */
-int open_dso_and_get_segments(const char *soname);
+/* remote dynamic linker */
+int open_dso_and_get_segments(const char *soname, pid_t pid);
+unsigned long call_remote_syscall(pid_t pid, int syscall_no, unsigned long r1,
+		unsigned long r2, unsigned long r3, unsigned long r4, unsigned long r5, unsigned long r6);
+unsigned long get_fs_base_remote(pid_t pid);
 unsigned long call_remote_mmap(pid_t pid, void *addr, size_t length, int prot, int flags, int fd, off_t offset);
 int call_remote_mprotect(pid_t pid, void *addr, size_t len, int prot);
 
 void dump_wait_state(pid_t pid, int status, int force);
+void dump_instruction_state(pid_t pid);
+char *read_bytes_remote(pid_t pid, char *addr, size_t slen);
+int write_bytes_remote(pid_t pid, void *addr, void *buf, size_t blen);
 
 
 
