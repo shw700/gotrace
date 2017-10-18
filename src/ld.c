@@ -14,6 +14,9 @@
 #include "config.h"
 
 
+#define MAX_SO_NEEDED	64
+
+
 jmp_buf jb;
 
 
@@ -433,6 +436,268 @@ get_local_vma(unsigned long base, size_t size, int prot, void *fixed) {
 
 //	fprintf(stderr, "GOT IT (%p)\n", vma);
 	return vma;
+}
+
+int elf_load_library(const char *dsopath, int *fd, size_t *dsize, Elf64_Ehdr **pehdr, Elf64_Phdr **pphdr, Elf64_Shdr **pshdr) {
+	struct stat sb;
+	unsigned char *bindata;
+
+	if ((*fd = open(dsopath, O_RDONLY)) < 0) {
+		PERROR("open");
+		return -1;
+	}
+
+	if (fstat(*fd, &sb) < 0) {
+		PERROR("fstat");
+		close(*fd);
+		return -1;
+	}
+
+	if (sb.st_size < sizeof(Elf64_Ehdr)) {
+		PRINT_ERROR("File \"%s\" is not large enough to be valid ELF object!\n", dsopath);
+		close(*fd);
+		return -1;
+	}
+
+	*dsize = sb.st_size;
+
+	if ((bindata = mmap(NULL, sb.st_size, PROT_READ, MAP_SHARED, *fd, 0)) == MAP_FAILED) {
+		PERROR("mmap");
+		close(*fd);
+		return -1;
+	}
+
+	*pehdr = (Elf64_Ehdr *)bindata;
+
+	if (memcmp((*pehdr)->e_ident, ELFMAG, SELFMAG)) {
+		PRINT_ERROR("File \"%s\" does not appear to be a valid ELF object!\n", dsopath);
+		goto errout;
+	} else if ((*pehdr)->e_ident[EI_CLASS] != ELFCLASS64) {
+		PRINT_ERROR("File \"%s\" does not appear to be a 64 bit ELF object!\n", dsopath);
+		goto errout;
+	} else if ((*pehdr)->e_ident[EI_VERSION] != EV_CURRENT) {
+		PRINT_ERROR("File \"%s\" contained unexpected ELF header version!\n", dsopath);
+		goto errout;
+	} else if ((*pehdr)->e_type != ET_DYN) {
+		PRINT_ERROR("File \"%s\" was not an ELF dynamic object!\n", dsopath);
+		goto errout;
+	} else if ((*pehdr)->e_machine != EM_X86_64) {
+		PRINT_ERROR("File \"%s\" was not for a supported architecture (X86_64)!\n", dsopath);
+		goto errout;
+	}
+
+	if ((*pehdr)->e_shentsize != sizeof(Elf64_Shdr)) {
+		PRINT_ERROR("File \"%s\" contained unexpected section header size!\n", dsopath);
+		goto errout;
+	} else if (((*pehdr)->e_shoff + (*pehdr)->e_shnum * (*pehdr)->e_shentsize) > sb.st_size) {
+		PRINT_ERROR("File \"%s\" contained a section header table that was out of bounds!\n", dsopath);
+		goto errout;
+	} else if (((*pehdr)->e_phoff + (*pehdr)->e_phnum * (*pehdr)->e_phentsize) > sb.st_size) {
+		PRINT_ERROR("File \"%s\" contained a program header table that was out of bounds!\n", dsopath);
+		goto errout;
+	}
+
+	*pphdr = (Elf64_Phdr *)(bindata + (*pehdr)->e_phoff);
+	*pshdr = (Elf64_Shdr *)(bindata + (*pehdr)->e_shoff);
+	return 0;
+
+errout:
+	munmap(bindata, sb.st_size);
+	close(*fd);
+	return -1;
+}
+
+char **strarr_dup(const char **sarray) {
+	const char **sptr = sarray;
+	char **result;
+	size_t i, rlen, nents = 0;
+
+	while (*sptr) {
+		nents++;
+		sptr++;
+	}
+
+	rlen = sizeof(char *) * (nents + 1);
+
+	if (!(result = malloc(rlen))) {
+		PERROR("malloc");
+		return NULL;
+	}
+
+	memset(result, 0, rlen);
+
+	for (i = 0; i < nents; i++) {
+		result[i] = strdup(sarray[i]);
+
+		if (!result[i]) {
+			PERROR("strdup");
+			free(result);
+			return NULL;
+		}
+
+	}
+
+	return result;
+}
+
+char **get_all_so_needed(const char *dsopath, char **curdeps) {
+	char *needed[MAX_SO_NEEDED+1];
+	Elf64_Ehdr *ehdr;
+	Elf64_Phdr *phdr;
+	Elf64_Shdr *shdr;
+	Elf64_Dyn *dyn = NULL;
+	unsigned char *bindata, *strtab = NULL;
+	char **result = NULL;
+	size_t fsize, i, dind = 0;//, strtab_size = 0;
+	int fd;
+
+	if (!strchr(dsopath, '/')) {
+		struct link_map *lm;
+		void *dladdr;
+
+//		fprintf(stderr, "XXX: looking up relative path: %s\n", dsopath);
+
+		if (!(dladdr = dlopen(dsopath, RTLD_NOW))) {
+			PRINT_ERROR("dlopen(): %s\n", dlerror());
+			NULL;
+		}
+
+		if (dlinfo(dladdr, RTLD_DI_LINKMAP, &lm) == -1) {
+			PRINT_ERROR("dlinfo(): %s\n", dlerror());
+			NULL;
+		}
+
+//		fprintf(stderr, "XXX: got it: [%s]\n", lm->l_name);
+		dsopath = lm->l_name;
+	}
+
+
+	if (elf_load_library(dsopath, &fd, &fsize, &ehdr, &phdr, &shdr) < 0) {
+		PRINT_ERROR("%s", "Error looking up shared object dependencies\n");
+		return NULL;
+	}
+
+	bindata = (unsigned char *)ehdr;
+	memset(&needed, 0, sizeof(needed));
+
+	for (i = 0; i < ehdr->e_shnum; i++) {
+		if (shdr[i].sh_type == SHT_STRTAB) {
+//			printf("XXX: STR Section header %zu: type %u, size %lu\n", i+1, shdr[i].sh_type, shdr[i].sh_size);
+			// XXX: BAD
+//			if (shdr[i].sh_size > strtab_size) {
+			if (!strtab) {
+				strtab = (void *)(bindata + shdr[i].sh_offset);
+//				strtab_size = shdr[i].sh_size;
+			}
+
+		} else if (shdr[i].sh_type == SHT_DYNAMIC)
+			dyn = (Elf64_Dyn *)(bindata + shdr[i].sh_offset);
+	}
+
+	if (!dyn) {
+		PRINT_ERROR("Error: could not find dynamic section of soname: %s\n", dsopath);
+		goto out;
+	} else if (!strtab) {
+		PRINT_ERROR("Error: could not find string table in soname: %s\n", dsopath);
+		goto out;
+	}
+
+	while (dyn->d_tag != DT_NULL) {
+		switch(dyn->d_tag) {
+			case DT_NEEDED:
+			case DT_INIT:
+			case DT_FINI:
+			case DT_SONAME:
+			case DT_INIT_ARRAY:
+			case DT_FINI_ARRAY:
+			case DT_INIT_ARRAYSZ:
+			case DT_FINI_ARRAYSZ:
+				break;
+			default:
+				dyn++;
+				continue;
+				break;
+		}
+
+//		if (dyn->d_tag != DT_NEEDED)
+//			fprintf(stderr, "DYNAMIC: %lu -> %lu\n", dyn->d_tag, dyn->d_un.d_val);
+
+		if (dyn->d_tag == DT_NEEDED) {
+//			PRINT_ERROR("STR: [%s]\n", strtab+dyn->d_un.d_val);
+
+			if (dind < MAX_SO_NEEDED) {
+				needed[dind] = (char *)strtab + dyn->d_un.d_val;
+				dind++;
+			}
+		}
+
+		dyn++;
+	}
+
+//	char *heh[] = { "libpthread.so.0", NULL };
+//	curdeps = heh;
+
+	// Remove any of the found dependencies that were already tracked by curdeps.
+	if (curdeps) {
+
+//		for (i = 0; i < dind; i++) {
+		i = 0;
+		while (needed[i]) {
+			char **cptr = curdeps;
+
+			while (*cptr) {
+				if (!strcmp(*cptr, needed[i])) {
+					size_t nleft = sizeof(needed) - (sizeof(needed[0]) * (i + 1));
+//fprintf(stderr, "XXX needed: [%s] / %zu of %zu\n", *cptr, nleft, sizeof(needed));
+					memmove(&(needed[i]), &(needed[i+1]), nleft);
+					i--;
+					break;
+				}
+
+				cptr++;
+			}
+
+			i++;
+		}
+
+	}
+
+	if (!needed[0]) {
+//		PRINT_ERROR("      + NO rneeded: %s\n", dsopath);
+		goto out;
+	}
+
+	i = 0;
+	while (needed[i]) {
+		char **rneeded;
+		PRINT_ERROR("NEEDED: [%s]\n", needed[i]);
+
+		rneeded = get_all_so_needed(needed[i], needed);
+		fprintf(stderr, "rneeded = %p (%s)\n", rneeded, needed[i]);
+
+		if (rneeded) {
+			while (*rneeded) {
+				PRINT_ERROR("- RN: [%s]\n", *rneeded);
+				rneeded++;
+			}
+		}
+
+		i++;
+	}
+
+	PRINT_ERROR("%s", "GOOD SO FAR\n");
+
+	i = 0;
+	while (needed[i])
+		i++;
+
+	fprintf(stderr, "Give back some rneeded: %s\n", dsopath);
+	result = strarr_dup((const char **)needed);
+
+out:
+	munmap(ehdr, fsize);
+	close(fd);
+	return result;
 }
 
 void *

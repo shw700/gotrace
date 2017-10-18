@@ -1193,10 +1193,10 @@ trace_program(const char *progname, char * const *args) {
 			PRINT_ERROR("%s", "Warning: child notified parent but was not in execution state\n");
 			break;
 		default: {
-/*			signed long mmr, fs_addr;
+			signed long mmr, fs_addr;
 			int res;
 
-			fs_addr = call_remote_mmap(pid, NULL, 65536, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, 0, 0);
+/*			fs_addr = call_remote_mmap(pid, NULL, 65536, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, 0, 0);
 			if (fs_addr < 0) {
 				errno = -(fs_addr);
 				PERROR("mmap(fs_addr)");
@@ -1208,7 +1208,12 @@ trace_program(const char *progname, char * const *args) {
 			if (set_fs_base_remote(pid, (unsigned long)fs_addr+32767) < 0) {
 				PRINT_ERROR("%s", "Error encountered setting up thread block in remote process\n");
 				exit(EXIT_FAILURE);
-			}
+			}*/
+
+/*			char **needed = get_all_so_needed("./libgomod.so.0.1.1", NULL);
+			PRINT_ERROR("needed = %p\n", needed);
+			exit(-1);
+
 
 			res = open_dso_and_get_segments("libc.so.6", pid);
 			fprintf(stderr, "LIBC result: %d\n", res);

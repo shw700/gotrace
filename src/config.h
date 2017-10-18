@@ -268,6 +268,7 @@ size_t make_jmp_buf(unsigned long from, unsigned long to, void *buf, size_t bufl
 char *read_string_remote(pid_t pid, char *addr, size_t slen);
 
 /* remote dynamic linker */
+char **get_all_so_needed(const char *dsopath, char **curdeps);
 int open_dso_and_get_segments(const char *soname, pid_t pid);
 unsigned long call_remote_syscall(pid_t pid, int syscall_no, unsigned long r1,
 		unsigned long r2, unsigned long r3, unsigned long r4, unsigned long r5, unsigned long r6);
