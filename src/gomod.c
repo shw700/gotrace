@@ -5,10 +5,10 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <dlfcn.h>
-#include <pthread.h>
 #include <sys/prctl.h>
 #include <asm/prctl.h>
 #include <setjmp.h>
+#include <sched.h>
 
 #include "config.h"
 
@@ -21,7 +21,7 @@ extern void *___dlopen_stub;
 extern void *func_hook_start, *func_hook_end;
 int _gotrace_socket_fd = -1;
 
-void *client_socket_loop(void *arg);
+int client_socket_loop(void *arg);
 unsigned long set_intercept_redirect(void *addr, unsigned long *ptrapaddr);
 int map_stub(void);
 
@@ -350,7 +350,7 @@ set_intercept_redirect(void *addr, unsigned long *ptrapaddr) {
 
 static int client_loop_initialized = 0;
 
-void *
+int
 client_socket_loop(void *arg) {
 	int fd = (int)((uintptr_t)arg);
 	pid_t tid = gettid();
@@ -369,7 +369,10 @@ client_socket_loop(void *arg) {
 
 		fprintf(stderr, "Loop Attempting to read bytes from %d\n", fd);
 
-		dbuf = recv_gt_msg(tid, fd, -1, &dblen, &reqtype, 0, NULL);
+		if (!(dbuf = recv_gt_msg(tid, fd, -1, &dblen, &reqtype, 0, NULL))) {
+			PRINT_ERROR("%s", "Client module encountered error.... shutting down\n");
+			break;
+		}
 
 		fprintf(stderr, "Loop CMD SIZE: %zu bytes / type %u\n", dblen, reqtype);
 
@@ -410,10 +413,10 @@ client_socket_loop(void *arg) {
 			char *sdata, *fname = (char *)dbuf;
 
 			fdata = (unsigned long *)(fname + strlen(fname) + 1);
-//			fprintf(stderr, "Loop received function call request: %s() / %p\n",
-//				fname, (void *)*fdata);
+			fprintf(stderr, "Loop received serialize data request: %s() / %p\n",
+				fname, (void *)*fdata);
 			if (!(sdata = call_data_serializer(fname, (void *)*fdata))) {
-				fprintf(stderr, "Loop encountered unexpected error serializing function data.\n");
+				PRINT_ERROR("Loop encountered unexpected error serializing type data: %s\n", fname);
 				free(dbuf);
 				break;
 			} else {
@@ -434,21 +437,20 @@ client_socket_loop(void *arg) {
 		first = 0;
         }
 
-//	exit(0);
 	fprintf(stderr, "Loop ending.\n");
-	return NULL;
+	return 0;
 }
 
 
-void _gomod_init(void)
+int _gomod_init(void)
 {
-	pthread_t ptid;
 	struct sockaddr_un s_un;
 	socklen_t ssize;
 	char *gotrace_socket_path = NULL;
 	int fd;
 
 	fprintf(stderr, "Loop outer (%d)\n", gettid());
+
 //	char *rx = call_golang_func_str((void *)0x000000000402100, (void *)0xc0debabe);
 //	fprintf(stderr, "Loop result heh = %p\n", rx);
 
@@ -459,16 +461,18 @@ void _gomod_init(void)
 	fprintf(stderr, "XXX: iret = %lx / trapping at %lx\n", iret, taddr);*/
 
 	if (!(gotrace_socket_path = getenv(GOTRACE_SOCKET_ENV))) {
+		static char spath[128];
+
 		fprintf(stderr, "Error: could not find gotrace socket path in environment!\n");
-		exit(EXIT_FAILURE);
-		return;
+		fprintf(stderr, "Trying manual construction of socket path instead...\n");
+		snprintf(spath, sizeof(spath), "/tmp/gotrace.sock.%d", getppid());
+		gotrace_socket_path = spath;
 	}
 
 	if ((fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1) {
 		perror("socket");
 		fprintf(stderr, "Error: could not create gotrace socket\n");
-		exit(EXIT_FAILURE);
-		return;
+		return -1;
 	}
 
 	memset(&s_un, 0, sizeof(s_un));
@@ -479,27 +483,27 @@ void _gomod_init(void)
 
 	if (connect(fd, (struct sockaddr *)&s_un, ssize) == -1) {
 		perror("connect");
-		fprintf(stderr, "Error: could not connect to gotrace socket listener\n");
-		exit(EXIT_FAILURE);
-		return;
+		fprintf(stderr, "Error: could not connect to gotrace socket listener at %s\n", s_un.sun_path);
+		return -1;
 	}
 
 	fprintf(stderr, "Loading...\n");
 
-	if (pthread_create(&ptid, NULL, client_socket_loop, (void *)((uintptr_t)fd)) != 0) {
-		perror("pthread_create");
-		fprintf(stderr, "Error: could not create new thread for gotrace socket\n");
-		exit(EXIT_FAILURE);
-		return;
-	}
+#define NEW_STACK_SIZE 8192
+	char *stack = malloc(NEW_STACK_SIZE);
+	int cpid, cflags = CLONE_FILES | CLONE_FS | CLONE_IO | CLONE_VM;
 
-	while (!client_loop_initialized) {
+	cpid = clone(client_socket_loop, stack+NEW_STACK_SIZE, cflags, (void *)((uintptr_t)fd));
+	fprintf(stderr, "clone() returned %d\n", cpid);
+
+/*	while (!client_loop_initialized) {
 		int hi = 0;
 		hi += 2;
 		hi += getpid();
-	}
+	}*/
 
 	fprintf(stderr, "Client injection module initialiation complete.\n");
+	return cpid;
 }
 
 int somefunc(void) {

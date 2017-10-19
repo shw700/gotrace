@@ -4,27 +4,6 @@ package main
 import "fmt"
 import "net"
 import "time"
-import "os"
-import "github.com/cookieo9/goffi/dlopen"
-
-
-const LIBPATH = "/home/shw/gotrace/libgomod.so.0.1.1"
-
-
-func import_lib() {
-	fmt.Println("HI!!!")
-	curdir, _ := os.Getwd()
-	fmt.Println("AAA: ", os.Setenv("LD_LIBRARY_PATH", curdir))
-	handle, err := dlopen.Open(LIBPATH, dlopen.NOW)
-	fmt.Printf("AAA: err = %v / handle = %v\n", err, handle)
-
-	if err != nil {
-		fmt.Println("Error loading shared libary: ", err)
-		os.Exit(-1)
-	}
-
-	return
-}
 
 
 func Somefunc(hi int) {
@@ -96,7 +75,6 @@ func GetConnection() *net.TCPConn {
 
 func main() {
 	fmt.Println("GO TEST GO TEST")
-//	import_lib()
 	conn := GetConnection()
 	TouchConnection(conn)
 	fmt.Println("conn = ", conn)

@@ -123,7 +123,8 @@ xrecv(pid_t pid, int sockfd, void *buf, size_t len, int do_ctl, pid_t *pout) {
 		if (result == -1)
 			perror_pid("recv", pid);
 		else
-	                PRINT_ERROR("%s", "Error encountered in reading data from gomod socket.\n");
+	                PRINT_ERROR("Error encountered in reading data from gomod socket (expected %zu but got %zu bytes)\n",
+				len, result);
 
 		result = -1;
 	}

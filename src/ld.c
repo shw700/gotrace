@@ -17,8 +17,60 @@
 #define MAX_SO_NEEDED	64
 
 
-jmp_buf jb;
+char **strarr_dup(const char **sarray);
+void strarr_free(char **sarray);
+int strarr_contains(const char **sarray, const char *findstr);
 
+
+jmp_buf jb;
+void *last_copy_start, *last_copy_end;
+
+
+int
+memcmp_remote(pid_t pid, void *buf, size_t size, unsigned long watch_val) {
+	void *rdata;
+	size_t pctr;
+	const unsigned char *p1, *p2;
+
+	if (!(rdata = read_bytes_remote(pid, buf, size)))
+		return -1;
+
+	p1 = buf;
+	p2 = rdata;
+
+	for (pctr = 0; pctr < size; pctr++) {
+
+		if (p1[pctr] != p2[pctr]) {
+			PRINT_ERROR("WOW Error: memory regions differ at offset %zu of %zu bytes (%x vs %x)\n",
+				pctr, size, p1[pctr], p2[pctr]);
+			free(rdata);
+			return -1;
+		}
+	}
+
+	free(rdata);
+	return 0;
+}
+
+const char *
+get_library_abs_path(const char *soname) {
+	struct link_map *lm;
+	void *dladdr;
+
+	if (strchr(soname, '/'))
+		return soname;
+
+	if (!(dladdr = dlopen(soname, RTLD_NOW | RTLD_NOLOAD))) {
+		return soname;
+	}
+
+	if (dlinfo(dladdr, RTLD_DI_LINKMAP, &lm) == -1) {
+		PRINT_ERROR("dlinfo(): %s\n", dlerror());
+		return NULL;
+	}
+
+	return lm->l_name;
+}
 
 void
 print_regs(pid_t pid) {
@@ -38,7 +90,7 @@ print_regs(pid_t pid) {
 
 uintptr_t
 call_remote_lib_func(pid_t pid, void *faddr, uintptr_t r1, uintptr_t r2, uintptr_t r3, uintptr_t r4,
-		uintptr_t r5, uintptr_t r6) {
+		uintptr_t r5, uintptr_t r6, int allow_event) {
 	struct user_regs_struct oregs, nregs;
 	unsigned long saved_i, call_i;
 	unsigned char *iptr;
@@ -96,6 +148,18 @@ call_remote_lib_func(pid_t pid, void *faddr, uintptr_t r1, uintptr_t r2, uintptr
 		dump_wait_state(pid, wait_status, 1);
 		dump_instruction_state(pid);
 		err = 1;
+	}
+
+	if (allow_event && ((wait_status >> 8) == (SIGTRAP | (allow_event << 8)))) {
+		PRINT_ERROR("XXX Detected event %d\n", allow_event);
+
+		if (ptrace(PTRACE_CONT, pid, NULL, NULL) == -1) {
+			perror_pid("ptrace(PTRACE_CONT)", pid);
+			return -1;
+		} else if (waitpid(pid, &wait_status, 0) == -1) {
+			perror_pid("waitpid", pid);
+			return -1;
+		}
 	}
 
 	if (!err && (ptrace(PTRACE_GETREGS, pid, 0, &nregs) == -1)) {
@@ -319,16 +383,36 @@ get_fs_base_remote(pid_t pid) {
 
 unsigned long
 call_remote_mmap(pid_t pid, void *addr, size_t length, int prot, int flags, int fd, off_t offset) {
-	return (call_remote_syscall(pid, SYS_mmap, (unsigned long)addr, length, prot, flags, fd, offset));
+        signed long ret;
+
+	ret = call_remote_syscall(pid, SYS_mmap, (unsigned long)addr, length, prot, flags, fd, offset);
+
+	if (ret < 0) {
+		errno = -(ret);
+		return -1;
+	}
+
+	return ret;
 }
 
 int
 call_remote_mprotect(pid_t pid, void *addr, size_t len, int prot) {
-	return (call_remote_syscall(pid, SYS_mprotect, (unsigned long)addr, len, prot, 0, 0, 0));
+	signed long ret;
+
+	ret = call_remote_syscall(pid, SYS_mprotect, (unsigned long)addr, len, prot, 0, 0, 0);
+
+	if (ret < 0) {
+		errno = -(ret);
+		return -1;
+	}
+
+	return ret;
 }
 
 void
 school_bus(int signo) {
+	PRINT_ERROR("Last copy range before signal delivery: %p <-> %p\n",
+		last_copy_start, last_copy_end);
 
 	if (signo == SIGBUS) {
 		PRINT_ERROR("%s", "Received SIGBUS\n");
@@ -350,7 +434,6 @@ get_remote_vma(pid_t pid, unsigned long base, size_t size, int prot, void *fixed
 	}
 
 	if ((vma = (void *)call_remote_mmap(pid, mbase, size, prot | PROT_WRITE | PROT_READ, map_flags, 0, 0)) == MAP_FAILED) {
-		// XXX: won't really work
 		perror_pid("mmap", pid);
 		return NULL;
 	}
@@ -376,7 +459,7 @@ get_remote_vma(pid_t pid, unsigned long base, size_t size, int prot, void *fixed
 
 	if (!(prot & PROT_WRITE)) {
 		if (call_remote_mprotect(pid, vma, size, prot) == -1) {
-			PERROR("mprotect");
+			perror_pid("mprotect", pid);
 			return NULL;
 		}
 
@@ -384,7 +467,6 @@ get_remote_vma(pid_t pid, unsigned long base, size_t size, int prot, void *fixed
 
 	return vma;
 }
-
 
 void *
 get_local_vma(unsigned long base, size_t size, int prot, void *fixed) {
@@ -421,6 +503,8 @@ get_local_vma(unsigned long base, size_t size, int prot, void *fixed) {
 	}
 
 	if (!failed) {
+		last_copy_start = vma;
+		last_copy_end = vma + size;
 		memcpy(vma, (void *)base, size);
 //		fprintf(stderr, "%s", "memcpy 2\n");
 	} else
@@ -438,7 +522,9 @@ get_local_vma(unsigned long base, size_t size, int prot, void *fixed) {
 	return vma;
 }
 
-int elf_load_library(const char *dsopath, int *fd, size_t *dsize, Elf64_Ehdr **pehdr, Elf64_Phdr **pphdr, Elf64_Shdr **pshdr) {
+int
+elf_load_library(const char *dsopath, int *fd, size_t *dsize, Elf64_Ehdr **pehdr,
+		Elf64_Phdr **pphdr, Elf64_Shdr **pshdr) {
 	struct stat sb;
 	unsigned char *bindata;
 
@@ -507,7 +593,8 @@ errout:
 	return -1;
 }
 
-char **strarr_dup(const char **sarray) {
+char **
+strarr_dup(const char **sarray) {
 	const char **sptr = sarray;
 	char **result;
 	size_t i, rlen, nents = 0;
@@ -540,7 +627,43 @@ char **strarr_dup(const char **sarray) {
 	return result;
 }
 
-char **get_all_so_needed(const char *dsopath, char **curdeps) {
+void
+strarr_free(char **sarray) {
+	char **sptr = sarray;
+
+	if (!sarray)
+		return;
+
+	while (*sptr) {
+		free(*sptr);
+		*sptr = NULL;
+		sptr++;
+	}
+
+	free(sarray);
+	return;
+}
+
+int
+strarr_contains(const char **sarray, const char *findstr) {
+	const char **sptr = sarray;
+
+	if (!sarray)
+		return 0;
+
+	while (*sptr) {
+
+		if (!strcmp(*sptr, findstr))
+			return 1;
+
+		sptr++;
+	}
+
+	return 0;
+}
+
+char **
+get_all_so_needed(const char *dsopath, char **curdeps) {
 	char *needed[MAX_SO_NEEDED+1];
 	Elf64_Ehdr *ehdr;
 	Elf64_Phdr *phdr;
@@ -551,6 +674,7 @@ char **get_all_so_needed(const char *dsopath, char **curdeps) {
 	size_t fsize, i, dind = 0;//, strtab_size = 0;
 	int fd;
 
+//	dsopath = get_library_abs_path(dsopath);
 	if (!strchr(dsopath, '/')) {
 		struct link_map *lm;
 		void *dladdr;
@@ -634,13 +758,9 @@ char **get_all_so_needed(const char *dsopath, char **curdeps) {
 		dyn++;
 	}
 
-//	char *heh[] = { "libpthread.so.0", NULL };
-//	curdeps = heh;
-
 	// Remove any of the found dependencies that were already tracked by curdeps.
 	if (curdeps) {
 
-//		for (i = 0; i < dind; i++) {
 		i = 0;
 		while (needed[i]) {
 			char **cptr = curdeps;
@@ -662,36 +782,52 @@ char **get_all_so_needed(const char *dsopath, char **curdeps) {
 
 	}
 
-	if (!needed[0]) {
-//		PRINT_ERROR("      + NO rneeded: %s\n", dsopath);
+	if (!needed[0])
 		goto out;
-	}
 
 	i = 0;
 	while (needed[i]) {
-		char **rneeded;
-		PRINT_ERROR("NEEDED: [%s]\n", needed[i]);
+		char **rneeded, **rptr;
 
-		rneeded = get_all_so_needed(needed[i], needed);
-		fprintf(stderr, "rneeded = %p (%s)\n", rneeded, needed[i]);
+		rptr = rneeded = get_all_so_needed(needed[i], needed);
+//		fprintf(stderr, "rneeded = %p (%s)\n", rneeded, needed[i]);
 
-		if (rneeded) {
-			while (*rneeded) {
-				PRINT_ERROR("- RN: [%s]\n", *rneeded);
-				rneeded++;
+		if (rptr) {
+			while (*rptr) {
+//				PRINT_ERROR("- RN on %s: [%s]\n", needed[i], *rptr);
+
+				if (!strarr_contains((const char **)needed, *rptr)) {
+					if (dind == MAX_SO_NEEDED)
+						PRINT_ERROR("%s", "Warning: detected new SO dependency but maximum number entries in use.\n");
+					else {
+						size_t to_copy = sizeof(needed) - (sizeof(needed[0]) * 2);
+
+						memmove(&(needed[1]), &needed[0], to_copy);
+
+						if (!(needed[0] = strdup(*rptr))) {
+							PERROR("malloc");
+							strarr_free(rneeded);
+							goto out;
+						}
+
+						dind++;
+					}
+
+				}
+
+				rptr++;
 			}
+
+			strarr_free(rneeded);
 		}
 
 		i++;
 	}
 
-	PRINT_ERROR("%s", "GOOD SO FAR\n");
-
 	i = 0;
 	while (needed[i])
 		i++;
 
-	fprintf(stderr, "Give back some rneeded: %s\n", dsopath);
 	result = strarr_dup((const char **)needed);
 
 out:
@@ -702,133 +838,96 @@ out:
 
 void *
 get_entry_point(const char *dsopath) {
-	struct stat sb;
-	Elf64_Ehdr *eheader;
-	Elf64_Phdr *pheaders;
-	Elf64_Shdr *sheaders;
-	Elf64_Sym *symtab = NULL;
-	void *strtab = NULL, *result = NULL;
+	Elf64_Ehdr *ehdr;
+	Elf64_Phdr *phdr;
+	Elf64_Shdr *shdr;
+	Elf64_Dyn *dyn = NULL;
+	void *result = NULL;
 	unsigned char *bindata;
-	size_t strtab_size = 0, i;
+	size_t fsize, i;
 	int fd;
 
-	if ((fd = open(dsopath, O_RDONLY)) < 0) {
-		PERROR("open");
+	dsopath = get_library_abs_path(dsopath);
+
+	if (elf_load_library(dsopath, &fd, &fsize, &ehdr, &phdr, &shdr) < 0) {
+		PRINT_ERROR("%s", "Error looking up shared object dependencies\n");
 		return NULL;
 	}
 
-	if (fstat(fd, &sb) < 0) {
-		PERROR("fstat");
-		close(fd);
-		return NULL;
-	}
+	bindata = (unsigned char *)ehdr;
 
-	if (sb.st_size < sizeof(Elf64_Ehdr)) {
-		PRINT_ERROR("File \"%s\" is not large enough to be valid ELF object!\n", dsopath);
-		close(fd);
-		return NULL;
-	}
-
-	if ((bindata = mmap(NULL, sb.st_size, PROT_READ, MAP_SHARED, fd, 0)) == MAP_FAILED) {
-		PERROR("mmap");
-		close(fd);
-		return NULL;
-	}
-
-	eheader = (Elf64_Ehdr *)bindata;
-
-	if (memcmp(eheader->e_ident, ELFMAG, SELFMAG)) {
-		PRINT_ERROR("File \"%s\" does not appear to be a valid ELF object!\n", dsopath);
-		goto out;
-	} else if (eheader->e_ident[EI_CLASS] != ELFCLASS64) {
-		PRINT_ERROR("File \"%s\" does not appear to be a 64 bit ELF object!\n", dsopath);
-		goto out;
-	} else if (eheader->e_ident[EI_VERSION] != EV_CURRENT) {
-		PRINT_ERROR("File \"%s\" contained unexpected ELF header version!\n", dsopath);
-		goto out;
-	} else if (eheader->e_type != ET_DYN) {
-		PRINT_ERROR("File \"%s\" was not an ELF dynamic object!\n", dsopath);
-		goto out;
-	} else if (eheader->e_machine != EM_X86_64) {
-		PRINT_ERROR("File \"%s\" was not for a supported architecture (X86_64)!\n", dsopath);
-		goto out;
-	}
-
-	if (eheader->e_shentsize != sizeof(Elf64_Shdr)) {
-		PRINT_ERROR("File \"%s\" contained unexpected section header size!\n", dsopath);
-		goto out;
-	} else if ((eheader->e_shoff + eheader->e_shnum * eheader->e_shentsize) > sb.st_size) {
-		PRINT_ERROR("File \"%s\" contained a section header table that was out of bounds!\n", dsopath);
-		goto out;
-	} else if ((eheader->e_phoff + eheader->e_phnum * eheader->e_phentsize) > sb.st_size) {
-		PRINT_ERROR("File \"%s\" contained a program header table that was out of bounds!\n", dsopath);
-		goto out;
-	}
-
-	pheaders = (Elf64_Phdr *)(bindata + eheader->e_phoff);
-	sheaders = (Elf64_Shdr *)(bindata + eheader->e_shoff);
-
-	for (i = 0; i < eheader->e_phnum; i++) {
-		if (pheaders[i].p_type != PT_LOAD)
-			continue;
-
-		fprintf(stderr, "Program header: %zu of %u: type = %x\n", i+1, eheader->e_phnum, pheaders[i].p_type);
-		fprintf(stderr, "    flags = %x, offset = %lx, vaddr = %lx, paddr = %lx, fsize = %lu, memsz = %lu, align = %lx\n",
-			pheaders[i].p_flags, pheaders[i].p_offset, pheaders[i].p_vaddr, pheaders[i].p_paddr,
-			pheaders[i].p_filesz, pheaders[i].p_memsz, pheaders[i].p_align);
-	}
-
-	for (i = 0; i < eheader->e_shnum; i++) {
-		if (sheaders[i].sh_type == SHT_SYMTAB) {
-			printf("Section header %zu: type %u, size %lu\n", i+1, sheaders[i].sh_type, sheaders[i].sh_size);
-			symtab = (void *)(bindata + sheaders[i].sh_offset);
-
-			if (sheaders[i].sh_entsize != sizeof(Elf64_Sym)) {
-				PRINT_ERROR("File \"%s\" contained unexpected symbol table entry size!\n", dsopath);
-				goto out;
-			}
-
-		} else if (sheaders[i].sh_type == SHT_STRTAB) {
-			printf("Section header %zu: type %u, size %lu\n", i+1, sheaders[i].sh_type, sheaders[i].sh_size);
-			// XXX: this is very wrong
-			if (sheaders[i].sh_size > strtab_size) {
-				strtab = (void *)(bindata + sheaders[i].sh_offset);
-				strtab_size = sheaders[i].sh_size;
-			}
-
-		} else if (sheaders[i].sh_type == SHT_DYNAMIC) {
-			PRINT_ERROR("%s", "LOCATED DYNAMIC SECTION\n");
-		} else if ((sheaders[i].sh_type == SHT_INIT_ARRAY) || (sheaders[i].sh_type == SHT_FINI_ARRAY)) {
+	for (i = 0; i < ehdr->e_shnum; i++) {
+		if (shdr[i].sh_type == SHT_DYNAMIC) {
+			dyn = (Elf64_Dyn *)(bindata + shdr[i].sh_offset);
+		} else if ((shdr[i].sh_type == SHT_INIT_ARRAY) || (shdr[i].sh_type == SHT_FINI_ARRAY)) {
 			unsigned long *funcptr;
 			size_t nfunc;
 
-			if (sheaders[i].sh_size % sizeof(void *)) {
-				PRINT_ERROR("Section advertised improperly aligned size: %lu\n", sheaders[i].sh_size);
+			if (shdr[i].sh_size % sizeof(void *)) {
+				PRINT_ERROR("Section advertised improperly aligned size: %lu\n", shdr[i].sh_size);
 				continue;
 			}
 
-			nfunc = sheaders[i].sh_size / sizeof(void *);
+			nfunc = shdr[i].sh_size / sizeof(void *);
 			
-			PRINT_ERROR("LOCATED INITS: %s / %zu entries\n", (sheaders[i].sh_type == SHT_INIT_ARRAY) ? "init" : "fini", nfunc);
-			PRINT_ERROR("   addr = %lx, off = %lx, size = %lu\n", sheaders[i].sh_addr, sheaders[i].sh_offset, sheaders[i].sh_size);
+			PRINT_ERROR("LOCATED INITS: %s / %zu entries\n", (shdr[i].sh_type == SHT_INIT_ARRAY) ? "init" : "fini", nfunc);
+			PRINT_ERROR("   addr = %lx, off = %lx, size = %lu\n", shdr[i].sh_addr, shdr[i].sh_offset, shdr[i].sh_size);
 
-			funcptr = (unsigned long *)(bindata + sheaders[i].sh_offset);
+			funcptr = (unsigned long *)(bindata + shdr[i].sh_offset);
 			PRINT_ERROR("   + func1 = %p\n", (void *)*funcptr);
 
-			if (sheaders[i].sh_type == SHT_INIT_ARRAY)
+			if (shdr[i].sh_type == SHT_INIT_ARRAY)
 				result = (void *)*funcptr;
 
-		} else if ((sheaders[i].sh_type > SHT_PROGBITS) && (sheaders[i].sh_type < SHT_GNU_ATTRIBUTES)) {
-			if (sheaders[i].sh_type != SHT_NOTE)
-				PRINT_ERROR("FOUND %x: %lu bytes\n", sheaders[i].sh_type, sheaders[i].sh_size);
 		}
 
 	}
 
+	if (!dyn) {
+		PRINT_ERROR("Error: could not find dynamic section of soname: %s\n", dsopath);
+		goto out;
+	}
+
+	while (dyn->d_tag != DT_NULL) {
+		switch(dyn->d_tag) {
+			case DT_INIT:
+//			case DT_FINI:
+//			case DT_INIT_ARRAY:
+//			case DT_FINI_ARRAY:
+//			case DT_INIT_ARRAYSZ:
+//			case DT_FINI_ARRAYSZ:
+				break;
+			default:
+				dyn++;
+				continue;
+				break;
+		}
+
+		fprintf(stderr, "DYNAMIC (%s): %lu -> 0x%lx\n", dsopath, dyn->d_tag, dyn->d_un.d_val);
+		result = (void *)dyn->d_un.d_val;
+		break;
+	}
+
+
 out:
-	munmap(bindata, sb.st_size);
+	munmap(bindata, fsize);
 	close(fd);
 	return result;
+}
+
+int check_mapped(void *addr) {
+	static void *mapped_addrs[1024];
+	static size_t nmapped;
+	size_t i;
+
+	for (i = 0; i < nmapped; i++) {
+		if (mapped_addrs[i] == addr)
+			return 1;
+	}
+
+	mapped_addrs[nmapped] = addr;
+	nmapped++;
+	return 0;
 }
 
 
@@ -843,23 +942,19 @@ typedef struct vmap_region {
 
 
 int
-open_dso_and_get_segments(const char *soname, pid_t pid) {
+open_dso_and_get_segments(const char *soname, pid_t pid, void **pinit_func, void **reloc_base, int open_all) {
 	vmap_region_t vmas[MAX_VMA];
 	FILE *f;
-	void *dladdr, *ep, *init_func, *ofunc;
+	void *dladdr;
 	char realname[PATH_MAX+1];
-//	char execbuf[128], execbuf2[128];
 	size_t vind = 0, i;
 	int no_load = 0;
-
-//	sprintf(execbuf, "echo 1; cat /proc/%d/maps | grep libgomod", getpid());
-//	sprintf(execbuf2, "echo 2; cat /proc/%d/maps | grep libgomod", getpid());
 
 	signal(SIGBUS, school_bus);
 
 	memset(realname, 0, sizeof(realname));
 
-	if (*soname != '/') {
+	if (!strchr(soname, '/')) {
 		struct link_map *lm;
 
 		if (!(dladdr = dlopen(soname, RTLD_NOW | RTLD_NOLOAD))) {
@@ -883,18 +978,24 @@ open_dso_and_get_segments(const char *soname, pid_t pid) {
 
 //	PRINT_ERROR("REAL NAME: [%s]\n", realname);
 
-//	ep = get_entry_point(realname);
-//	fprintf(stderr, "Entry point: %p\n", ep);
-
 	if (!no_load && (!(dladdr = dlopen(realname, RTLD_NOW | RTLD_DEEPBIND)))) {
 		PRINT_ERROR("dlopen(): %s\n", dlerror());
 		return -1;
 	}
 
-	init_func = dlsym(dladdr, "_gomod_init");
-//	ofunc = dlsym(dladdr, "getpid");
-//	PRINT_ERROR("init_func() = %p\n", init_func);
-//	PRINT_ERROR("other func() = %p\n", ofunc);
+	if (reloc_base) {
+		struct link_map *lm;
+
+		if (dlinfo(dladdr, RTLD_DI_LINKMAP, &lm) == -1) {
+			PRINT_ERROR("dlinfo(): %s\n", dlerror());
+			return -1;
+		}
+
+		*reloc_base = (void *)lm->l_addr;
+	}
+
+	if (pinit_func)
+		*pinit_func = dlsym(dladdr, GOMOD_INIT_FUNC);
 
 	if ((f = fopen("/proc/self/maps", "r")) == NULL) {
 		perror_pid("fopen(/proc/self/maps", 0);
@@ -902,6 +1003,9 @@ open_dso_and_get_segments(const char *soname, pid_t pid) {
 	}
 
 	memset(vmas, 0, sizeof(vmas));
+
+	char last_named[256];
+	memset(last_named, 0, sizeof(last_named));
 
 	while (!feof(f)) {
 		unsigned long start, end;
@@ -930,13 +1034,25 @@ open_dso_and_get_segments(const char *soname, pid_t pid) {
 		if ((!strtok(NULL, " ")) || (!strtok(NULL, " ")))
 			continue;
 
-		if (!(objname = tok = strtok(NULL, " ")))
-			continue;
+		if ((!(objname = tok = strtok(NULL, " "))) && !open_all) {
 
-		if (*objname != '/')
-			continue;
-		else if (strcmp(objname, realname))
-			continue;
+			if (strstr(last_named, "libc")) {
+				memset(last_named, 0, sizeof(last_named));
+			} else {
+				memset(last_named, 0, sizeof(last_named));
+				continue;
+			}
+
+		}
+
+		if (objname && *objname) {
+			strncpy(last_named, objname, sizeof(last_named));
+
+			if (*objname != '/')
+				continue;
+			else if (strcmp(objname, realname))
+				continue;
+		}
 
 		if (!(hyph = strchr(range, '-')))
 			continue;
@@ -959,8 +1075,9 @@ open_dso_and_get_segments(const char *soname, pid_t pid) {
 		if (err)
 			continue;
 
-		fprintf(stdout, "Range: [%lx to %lx], perms: [%s], offset: [%s], name: [%s]\n", start, end, perms, foffset, objname);
-		fflush(stdout);
+//		check_mapped((void *)start);
+
+		fprintf(stderr, "Range: [%lx to %lx], perms: [%s], offset: [%s], name: [%s]\n", start, end, perms, foffset, objname);
 
 		vmas[vind].start = start;
 		vmas[vind].end = end;
@@ -982,8 +1099,6 @@ open_dso_and_get_segments(const char *soname, pid_t pid) {
 
 	}
 
-//	system(execbuf);
-
 	for (i = 0; i < vind; i++) {
 		void *v;
 
@@ -993,8 +1108,8 @@ open_dso_and_get_segments(const char *soname, pid_t pid) {
 		PRINT_ERROR("v = %p\n", v);
 	}
 
-	if (dlclose(dladdr) == -1)
-		PRINT_ERROR("dlclose(): %s\n", dlerror());
+//	if (dlclose(dladdr) == -1)
+//		PRINT_ERROR("dlclose(): %s\n", dlerror());
 
 	for (i = 0; i < vind; i++) {
 		void *v2;
@@ -1004,15 +1119,154 @@ open_dso_and_get_segments(const char *soname, pid_t pid) {
 		PRINT_ERROR("v2 = %p\n", v2);
 	}
 
-//	system(execbuf);
+/*	if (strstr(soname, "libc")) {
+		for (i = 0; i < vind; i++) {
+			fprintf(stderr, "XXX: %p <-> %p\n", (void *)vmas[i].start, (void *)vmas[i].end);
+			fprintf(stderr, "XXX: %d\n", memcmp_remote(pid, (void *)vmas[i].start, vmas[i].end-vmas[i].start, 0));
+		}
+	}*/
 
-/*	void (*ffunc)(void);
-	ffunc = (void *)ofunc;
-	fprintf(stderr, "About to call printf: %p\n", ffunc);
-//	int rr = call_remote_lib_func(pid, ffunc, "Hello world\n", 0, 0, 0, 0, 0);
-	int rr = call_remote_lib_func(pid, ffunc, 666, 0, 0, 0, 0, 0);
-	fprintf(stderr, "rr = %d\n", rr);*/
 
+	return 0;
+}
+
+#define MAX_REPLICATE_VMA 128
+
+int
+replicate_process_remotely(pid_t pid) {
+	char exename[PATH_MAX+1], exelookup[64];
+	vmap_region_t vmas[MAX_REPLICATE_VMA];
+	FILE *f;
+	size_t vind = 0, i;
+
+	memset(exename, 0, sizeof(exename));
+	snprintf(exelookup, sizeof(exelookup), "/proc/self/exe");
+
+	if (!(realpath(exelookup, exename))) {
+		PERROR("realpath");
+		return -1;
+	}
+
+	signal(SIGBUS, school_bus);
+
+	if ((f = fopen("/proc/self/maps", "r")) == NULL) {
+		perror_pid("fopen(/proc/self/maps", 0);
+		return -1;
+	}
+
+	memset(vmas, 0, sizeof(vmas));
+
+	char last_named[256];
+	memset(last_named, 0, sizeof(last_named));
+
+	while (!feof(f)) {
+		unsigned long start, end;
+		char mline[512], *hyph;
+		char *tok, *range, *perms, *foffset, *objname;
+		int err = 0;
+
+		memset(mline, 0, sizeof(mline));
+
+		if (!fgets(mline, sizeof(mline), f))
+			break;
+		else if (!mline[0])
+			continue;
+
+		mline[strlen(mline)-1] = 0;
+
+		if (!(range = tok = strtok(mline, " ")))
+			continue;
+
+		if (!(perms = tok = strtok(NULL, " ")))
+			continue;
+
+		if (!(foffset = tok = strtok(NULL, " ")))
+			continue;
+
+		if ((!strtok(NULL, " ")) || (!strtok(NULL, " ")))
+			continue;
+
+		if ((objname = tok = strtok(NULL, " "))) {
+			if (!strcmp(objname, "[vsyscall]")) {
+				PRINT_ERROR("Skipping over vsyscall entry: %s\n", range);
+				continue;
+			} else if (!strcmp(objname, exename)) {
+				PRINT_ERROR("Skipping over self exe: %s\n", objname);
+				continue;
+			}
+		}
+
+		if (!(hyph = strchr(range, '-')))
+			continue;
+
+		*hyph++ = 0;
+
+		errno = 0;
+		start = strtoul(range, NULL, 16);
+
+		if (errno)
+			err = 1;
+		else {
+			errno = 0;
+			end = strtoul(hyph, NULL, 16);
+
+			if (errno)
+				err = 1;
+		}
+
+		if (err)
+			continue;
+
+		errno = 0;
+		ptrace(PTRACE_PEEKDATA, pid, start, 0);
+		if (!errno)
+			PRINT_ERROR("Warning: peek failed at %p\n", (void *)start);
+		else {
+			ptrace(PTRACE_PEEKDATA, pid, end, 0);
+			if (!errno)
+				PRINT_ERROR("Warning: peek failed at %p\n", (void *)end);
+		}
+
+		vmas[vind].start = start;
+		vmas[vind].end = end;
+		vmas[vind].prot = 0;
+
+		if (strchr(perms, 'r'))
+			vmas[vind].prot |= PROT_READ;
+		if (strchr(perms, 'w'))
+			vmas[vind].prot |= PROT_WRITE;
+		if (strchr(perms, 'x'))
+			vmas[vind].prot |= PROT_EXEC;
+
+		vind++;
+
+		if (vind == MAX_REPLICATE_VMA) {
+			PRINT_ERROR("%s", "Unexpected high number of mapped virtual memory areas; exiting scan.\n");
+			break;
+		}
+
+	}
+
+	for (i = 0; i < vind; i++) {
+		void *v;
+
+		v = get_local_vma(vmas[i].start, vmas[i].end-vmas[i].start, vmas[i].prot, NULL);
+		vmas[i].new_base = v;
+		PRINT_ERROR("v = %p\n", v);
+	}
+
+	for (i = 0; i < vind; i++) {
+
+		if (!(get_remote_vma(pid, (unsigned long)vmas[i].new_base, vmas[i].end-vmas[i].start, vmas[i].prot, (void *)vmas[i].start))) {
+			char execbuf[128];
+
+			PRINT_ERROR("VMA error in mapping: %p -> %p\n", (void *)vmas[i].start, (void *)vmas[i].end);
+			sprintf(execbuf, "cat /proc/%d/maps", pid);
+			system(execbuf);
+			return -1;
+		}
+
+	}
 
 	return 0;
 }

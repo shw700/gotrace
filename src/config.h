@@ -269,12 +269,17 @@ char *read_string_remote(pid_t pid, char *addr, size_t slen);
 
 /* remote dynamic linker */
 char **get_all_so_needed(const char *dsopath, char **curdeps);
-int open_dso_and_get_segments(const char *soname, pid_t pid);
+int open_dso_and_get_segments(const char *soname, pid_t pid, void **pinit_func, void **reloc_base, int open_all);
+void *get_entry_point(const char *dsopath);
 unsigned long call_remote_syscall(pid_t pid, int syscall_no, unsigned long r1,
-		unsigned long r2, unsigned long r3, unsigned long r4, unsigned long r5, unsigned long r6);
-unsigned long get_fs_base_remote(pid_t pid);
+	unsigned long r2, unsigned long r3, unsigned long r4, unsigned long r5, unsigned long r6);
 unsigned long call_remote_mmap(pid_t pid, void *addr, size_t length, int prot, int flags, int fd, off_t offset);
 int call_remote_mprotect(pid_t pid, void *addr, size_t len, int prot);
+uintptr_t call_remote_lib_func(pid_t pid, void *faddr, uintptr_t r1, uintptr_t r2, uintptr_t r3,
+	uintptr_t r4, uintptr_t r5, uintptr_t r6, int allow_event);
+unsigned long get_fs_base_remote(pid_t pid);
+int replicate_process_remotely(pid_t pid);
+
 
 void dump_wait_state(pid_t pid, int status, int force);
 void dump_instruction_state(pid_t pid);
@@ -402,6 +407,10 @@ typedef struct __attribute__((packed)) gomod_data_hdr {
 	uint16_t size;
 	uint8_t reqtype;
 } gomod_data_hdr_t;
+
+
+#define GOMOD_LIB_NAME		"libgomod.so.0.1.1"
+#define GOMOD_INIT_FUNC		"_gomod_init"
 
 
 #endif // !CONFIG_H

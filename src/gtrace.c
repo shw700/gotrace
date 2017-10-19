@@ -42,7 +42,6 @@ typedef struct saved_prolog {
 	void *addr;
 	long saved_prolog;
 	char *fname;
-	int refcnt;
 } saved_prolog_t;
 
 typedef struct remote_intercept {
@@ -81,6 +80,17 @@ char *excluded_intercepts[] = {
 	"runtime.exitsyscallfast",
 	"runtime.lock",
 	"runtime.futexwakeup"*/
+/*	"threadentry",
+	"setg_gcc",
+	"runtime.mstart",
+	"runtime.mstart1",
+	"runtime.gosave",
+	"runtime.asminit",
+	"runtime.minit",
+	"runtime.sigaltstack",
+	"runtime.signalstack",
+	"runtime.gettid",
+	"runtime.rtsigprocmask"*/
 };
 
 char *read_bytes_remote(pid_t pid, char *addr, size_t slen);
@@ -358,7 +368,8 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 	long retrace, ret_addr;
 	size_t i, ra;
 	int ret, is_return = 0;
-//	int last_ref = 0;
+
+//	if ((status >> 8) == (SIGTRAP | (PTRACE_EVENT_CLONE << 8))) { }
 
 	if (!WIFSTOPPED(status) || (WSTOPSIG(status) != SIGTRAP)) {
 		dump_wait_state(pid, status, 1);
@@ -426,11 +437,6 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 		}
 
 		is_return = 1;
-
-//		if (__sync_sub_and_fetch(&(saved_ret_prologs[ra].refcnt), 1) == 0)
-//			last_ref = 1;
-
-//		printf("HEH: return refcnt[%zu] for %s (%p) is %d; last ref = %d\n", ra, saved_ret_prologs[ra].fname, saved_ret_prologs[ra].addr, saved_ret_prologs[ra].refcnt, last_ref);
 	}
 
 	if (dont_reset)
@@ -453,9 +459,6 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 		if (set_ret_intercept(pid, symname, (void *)ret_addr, &ridx) < 0) {
 			PRINT_ERROR("%s", "Error: could not set intercept on return address\n");
 	//		return -1;
-		} else {
-			__sync_add_and_fetch(&(saved_ret_prologs[ridx].refcnt), 1);
-//			printf("HEH2: return[%zu] refcnt for %s (%p) is %d\n", ridx, saved_ret_prologs[ridx].fname, saved_ret_prologs[ridx].addr, saved_ret_prologs[ridx].refcnt);
 		}
 
 	}
@@ -880,7 +883,6 @@ child_trace_program(const char *progname, char * const *args) {
 	printf("In child.\n");
 	raise(SIGSTOP);
 	printf("After raising.\n");
-//	setenv(GOTRACE_SOCKET_ENV, "/home/shw/gotrace/libgomod.so.0.1.1", 1);
 //	fprintf(stderr, "socket path: [%s]\n", gotrace_socket_path);
 	setenv(GOTRACE_SOCKET_ENV, gotrace_socket_path, 1);
 	execv(progname, args);
@@ -1073,11 +1075,12 @@ dump_instruction_state(pid_t pid) {
 		perror_pid("ptrace(PTRACE_GETSIGINFO)", pid);
 	else if (ptrace(PTRACE_GETREGS, pid, 0, &regs) < 0) {
 		perror_pid("ptrace(PTRACE_GETREGS)", pid);
-		PRINT_ERROR("%s occurred at address: %p\n", strsignal(si.si_signo), si.si_addr);
+		PRINT_ERROR("%s occurred in PID %d at address: %p\n",
+			strsignal(si.si_signo), pid, si.si_addr);
 		r_addr = dladdr((void *)si.si_addr, &ainfo) != 0;
 	} else {
-		PRINT_ERROR("%s occurred at address %p / PC %p\n",
-			strsignal(si.si_signo), si.si_addr, (void *)regs.rip);
+		PRINT_ERROR("%s occurred in PID %d at address %p / PC %p\n",
+			strsignal(si.si_signo), pid, si.si_addr, (void *)regs.rip);
 		print_instruction(pid, (void *)regs.rip, 16);
 		r_addr = dladdr((void *)si.si_addr, &ainfo) != 0;
 		r_pc = dladdr((void *)regs.rip, &iinfo) != 0;
@@ -1093,8 +1096,6 @@ dump_instruction_state(pid_t pid) {
 
 		PRINT_ERROR("%s", "\n");
 	}
-
-//	PRINT_ERROR("%%fs base = %p\n", (void *)regs.fs_base);
 
 	return;
 }
@@ -1193,45 +1194,125 @@ trace_program(const char *progname, char * const *args) {
 			PRINT_ERROR("%s", "Warning: child notified parent but was not in execution state\n");
 			break;
 		default: {
-			signed long mmr, fs_addr;
-			int res;
+			struct user_regs_struct regs;
+//			char **needed;
+			void *dlhandle, *initfunc = NULL; //, *reloc_base = NULL;
+			const char *libname = GOMOD_LIB_NAME;
+			signed long our_fs, old_fs;
+			int pres;
 
-/*			fs_addr = call_remote_mmap(pid, NULL, 65536, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, 0, 0);
-			if (fs_addr < 0) {
-				errno = -(fs_addr);
-				PERROR("mmap(fs_addr)");
+			if ((dlhandle = dlopen(libname, RTLD_NOW|RTLD_DEEPBIND)) == NULL) {
+				PRINT_ERROR("dlopen(): %s", dlerror());
 				exit(EXIT_FAILURE);
 			}
 
 //			res = call_remote_syscall(pid, SYS_arch_prctl, ARCH_SET_FS, fs_addr+32767, 0, 0, 0, 0);
+#define arch_prctl(code,addr)	syscall(SYS_arch_prctl, code, addr)
+			if (arch_prctl(ARCH_GET_FS, &our_fs) == -1) {
+				perror("arch_prctl(ARCH_GET_FS)");
+				exit(EXIT_FAILURE);
+			}
 
-			if (set_fs_base_remote(pid, (unsigned long)fs_addr+32767) < 0) {
+			if (ptrace(PTRACE_GETREGS, pid, 0, &regs) < 0) {
+				perror_pid("ptrace(PTRACE_GETREGS)", pid);
+				exit(EXIT_FAILURE);
+			}
+
+			old_fs = regs.fs_base;
+
+			if (set_fs_base_remote(pid, (unsigned long)our_fs) < 0) {
 				PRINT_ERROR("%s", "Error encountered setting up thread block in remote process\n");
+				exit(EXIT_FAILURE);
+			}
+
+			if (replicate_process_remotely(pid) < 0) {
+				PRINT_ERROR("%s", "Error encountered replicating process address space remotely\n");
+				exit(EXIT_FAILURE);
+			}
+
+/*			if (!(needed = get_all_so_needed(libname, NULL))) {
+				PRINT_ERROR("Error looking up dependencies for DSO: %s\n", libname);
+				exit(EXIT_FAILURE);
+			}
+
+			while (*needed) {
+				void *ep;
+
+				PRINT_ERROR("FINAL NEEDED: [%s]\n", *needed);
+
+				if ((res = open_dso_and_get_segments(*needed, pid, NULL, &reloc_base, 0)) < 0) {
+					PRINT_ERROR("Error copying out remote dependency: %s\n", *needed);
+					exit(EXIT_FAILURE);
+				}
+
+				ep = get_entry_point(*needed);
+
+				if (ep && reloc_base) {
+					void *init_reloc = reloc_base + (unsigned long)ep;
+
+					if (strstr(*needed, "libc")) {
+						PRINT_ERROR("HAHA AWESOME: %s -> %p (%p) <- %p\n", *needed, init_reloc, ep, reloc_base);
+						initfunc = init_reloc;
+					}
+
+				} else {
+					PRINT_ERROR("Warning: DSO %s had no mappable entry point\n", *needed);
+				}
+
+				needed++;
+			}
+
+			// We mapped in all our dependencies; now do ourselves
+			if ((res = open_dso_and_get_segments(libname, pid, &initfunc, &reloc_base, 1)) < 0) {
+//			if ((res = open_dso_and_get_segments(libname, pid, NULL, NULL)) < 0) {
+				PRINT_ERROR("Error copying out remote library: %s\n", libname);
 				exit(EXIT_FAILURE);
 			}*/
 
-/*			char **needed = get_all_so_needed("./libgomod.so.0.1.1", NULL);
-			PRINT_ERROR("needed = %p\n", needed);
-			exit(-1);
+			start_listener();
 
+			if (!(initfunc = dlsym(dlhandle, GOMOD_INIT_FUNC))) {
+				PRINT_ERROR("dlsym(): %s\n", dlerror());
+				exit(EXIT_FAILURE);
+			}
 
-			res = open_dso_and_get_segments("libc.so.6", pid);
-			fprintf(stderr, "LIBC result: %d\n", res);
-			exit(-1);*/
+			if ((pres = call_remote_lib_func(pid, initfunc, 0, 0, 0, 0, 0, 0, PTRACE_EVENT_CLONE)) < 0) {
+				PRINT_ERROR("%s", "Error in initialization of remote injection module\n");
+				exit(EXIT_FAILURE);
+			}
+
+			// The pid returned is our module's socket loop (native code)
+			if (ptrace(PTRACE_SETOPTIONS, pres, NULL, 0) < 0) {
+				perror_pid("ptrace(~PTRACE_SETOPTIONS)", pres);
+				exit(EXIT_FAILURE);
+			}
+
+			if (set_fs_base_remote(pid, old_fs) < 0) {
+				PRINT_ERROR("%s", "Error restoring original thread block in remote process\n");
+				exit(EXIT_FAILURE);
+			}/* else if (set_fs_base_remote(pres, old_fs) < 0) {
+				PRINT_ERROR("%s", "Error restoring original thread block in remote process\n");
+				exit(EXIT_FAILURE);
+			}*/
+
+			test_pid = pid;
+
+			if (set_all_intercepts(pid) < 0) {
+				PRINT_ERROR("%s", "Error encountered while setting intercepts.\n");
+				exit(EXIT_FAILURE);
+			}
+
+//			dump_intercepts();
+
+			// Probably unnecessary.
+/*			if (ptrace(PTRACE_SETREGS, pid, 0, &regs) < 0) {
+				perror_pid("ptrace(PTRACE_SETREGS)", pid);
+				exit(EXIT_FAILURE);
+			} */
 
 			break;
 		}
 	}
-
-/*	if (set_all_intercepts(pid) < 0) {
-		PRINT_ERROR("%s", "Error encountered while setting intercepts.\n");
-		exit(EXIT_FAILURE);
-	} */
-	test_pid = pid;
-
-//	dump_intercepts();
-
-	start_listener();
 
 	printf("Running loop...\n");
 
@@ -1269,7 +1350,6 @@ trace_program(const char *progname, char * const *args) {
 
 			continue;
 		}
-
 
 		dump_wait_state(cpid, wait_status, 0);
 

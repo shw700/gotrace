@@ -57,7 +57,8 @@ $(GOTRACE_BIN): $(GOTRACE_OBJS)
 
 # injected binary
 GOMOD_BIN=libgomod.so.$(CONFIG_VERSION)
-GOMOD_LDFLAGS="-Wl,-init=_gomod_init" -fPIC -shared $(LDFLAGS)
+#GOMOD_LDFLAGS="-Wl,-init=_gomod_init" -fPIC -shared $(LDFLAGS)
+GOMOD_LDFLAGS=-fPIC -shared $(LDFLAGS)
 GOMOD_LIB=-ldl -lpthread gomod_printlib.a $(ZYDIS_LIB)
 GOMOD_OBJS=\
 	src/gomod.o \
