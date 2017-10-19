@@ -275,8 +275,7 @@ call_remote_syscall(pid_t pid, int syscall_no, unsigned long r1, unsigned long r
 	if (err)
 		return -1;
 
-	fprintf(stderr, "+++  Remote syscall returning: %llx\n", nregs.rax);
-
+//	fprintf(stderr, "+++  Remote syscall returning: %llx\n", nregs.rax);
 	return nregs.rax;
 }
 
@@ -1195,6 +1194,9 @@ replicate_process_remotely(pid_t pid) {
 				continue;
 			}
 		}
+
+		if (objname && *objname && (!strcmp(objname, "/dev/zero")))
+			continue;
 
 		if (!(hyph = strchr(range, '-')))
 			continue;

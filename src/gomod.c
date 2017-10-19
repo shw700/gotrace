@@ -415,11 +415,16 @@ client_socket_loop(void *arg) {
 			fdata = (unsigned long *)(fname + strlen(fname) + 1);
 			fprintf(stderr, "Loop received serialize data request: %s() / %p\n",
 				fname, (void *)*fdata);
-			if (!(sdata = call_data_serializer(fname, (void *)*fdata))) {
+/*			if (!(sdata = call_data_serializer(fname, (void *)*fdata))) {
 				PRINT_ERROR("Loop encountered unexpected error serializing type data: %s\n", fname);
 				free(dbuf);
 				break;
-			} else {
+			} else {*/
+			if (1==1) {
+				char sbuf[128];
+
+				snprintf(sbuf, sizeof(sbuf), "___%s(%p)___", fname, (void *)*fdata);
+				sdata = strdup(sbuf);
 //				fprintf(stderr, "Loop serialized struct data: [%s]\n", sdata);
 				free(dbuf);
 
@@ -489,9 +494,14 @@ int _gomod_init(void)
 
 	fprintf(stderr, "Loading...\n");
 
-#define NEW_STACK_SIZE 8192
-	char *stack = malloc(NEW_STACK_SIZE);
+#define NEW_STACK_SIZE 65536
+	char *stack;
 	int cpid, cflags = CLONE_FILES | CLONE_FS | CLONE_IO | CLONE_VM;
+
+	if ((stack = mmap(NULL, NEW_STACK_SIZE, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE|MAP_GROWSDOWN, 0, 0)) == MAP_FAILED) {
+		perror("mmap");
+		return -1;
+	}
 
 	cpid = clone(client_socket_loop, stack+NEW_STACK_SIZE, cflags, (void *)((uintptr_t)fd));
 	fprintf(stderr, "clone() returned %d\n", cpid);

@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <stddef.h>
+#include <fcntl.h>
 #include <sys/ptrace.h>
 #include <signal.h>
 #include <sys/types.h>
@@ -93,6 +94,10 @@ char *excluded_intercepts[] = {
 	"runtime.rtsigprocmask"*/
 };
 
+pid_t master_pid = -1;
+pid_t observed_pids[1024];
+
+
 char *read_bytes_remote(pid_t pid, char *addr, size_t slen);
 int write_bytes_remote(pid_t pid, void *addr, void *buf, size_t blen);
 void print_instruction(pid_t pid, void *addr, size_t len);
@@ -110,9 +115,51 @@ int is_intercept_excluded(const char *fname);
 
 int save_remote_intercept(pid_t pid, const char *fname, void *addr, int is_entry);
 
+void monitor_pid(pid_t pid, int do_remove);
+int is_pid_monitored(pid_t pid);
+
 void cleanup(void);
 void handle_int(int signo);
 
+
+void
+monitor_pid(pid_t pid, int do_remove) {
+	size_t i;
+	ssize_t first_empty = -1;
+
+	for (i = 0; i < sizeof(observed_pids)/sizeof(observed_pids[0]); i++) {
+
+		if (!observed_pids[i])
+			first_empty = i;
+		else if (observed_pids[i] == pid) {
+
+			if (do_remove)
+				observed_pids[i] = 0;
+
+			return;
+		}
+
+	}
+
+	if (first_empty >= 0)
+		observed_pids[first_empty] = pid;
+
+	return;
+}
+
+int
+is_pid_monitored(pid_t pid) {
+	size_t i;
+
+	for (i = 0; i < sizeof(observed_pids)/sizeof(observed_pids[0]); i++) {
+
+		if (observed_pids[i] == pid)
+			return 1;
+
+	}
+
+	return 0;
+}
 
 void
 cleanup(void) {
@@ -369,6 +416,11 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 	size_t i, ra;
 	int ret, is_return = 0;
 
+	if (WIFSTOPPED(status) && WSTOPSIG(status) == SIGUSR1) {
+//		fprintf(stderr, "SIGUSR1 OK\n");
+		return 1;
+	}
+
 //	if ((status >> 8) == (SIGTRAP | (PTRACE_EVENT_CLONE << 8))) { }
 
 	if (!WIFSTOPPED(status) || (WSTOPSIG(status) != SIGTRAP)) {
@@ -381,6 +433,8 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 					perror_pid("ptrace(PTRACE_SETOPTIONS)", pid);
 					exit(EXIT_FAILURE);
 				}
+
+				monitor_pid(pid, 0);
 
 /*				if (set_all_intercepts(pid) < 0) {
 					fprintf(stderr, "Error encountered while setting intercepts in new process.\n");
@@ -403,6 +457,30 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 	}
 
 	DEBUG_PRINT(2, "Handling trace trap!\n");
+
+#define tgkill(tgid,tid,sig)	syscall(SYS_tgkill, tgid, tid, sig)
+	if (master_pid > 0) {
+		size_t j;
+
+		for (j = 0; j < sizeof(observed_pids)/sizeof(observed_pids[0]); j++) {
+			int kret;
+
+			if (!observed_pids[j])
+				continue;
+			else if (observed_pids[j] == pid)
+				continue;
+
+			if ((kret = tgkill(master_pid, observed_pids[j], SIGUSR1)) == -1) {
+
+				if (errno == ESRCH)
+					monitor_pid(observed_pids[j], 1);
+
+				perror_pid("tgkill", observed_pids[j]);
+			}
+
+		}
+
+	}
 
 	if (ptrace(PTRACE_GETREGS, pid, 0, &regs) < 0) {
 		perror_pid("ptrace(PTRACE_GETREGS)", pid);
@@ -629,6 +707,7 @@ dump_wait_state(pid_t pid, int status, int force) {
 	else if ((status >> 8) == (SIGTRAP | (PTRACE_EVENT_EXIT << 8))) {
 		lt_tsd_t *tsdx = thread_get_tsd(pid, 1);
 
+		monitor_pid(pid, 1);
 		PRINT_ERROR("%s", "Detected exit() event\n");
 		sym_exit("___________exit", NULL, "from", "to", pid, NULL, NULL, tsdx);
 	}
@@ -1139,7 +1218,7 @@ trace_program(const char *progname, char * const *args) {
 
 	printf("Attempting to trace...: %s\n", progname);
 
-	switch(pid = fork()) {
+	switch(master_pid = pid = fork()) {
 		case 0:
 			child_trace_program(progname, args);
 			exit(EXIT_FAILURE);
@@ -1168,6 +1247,8 @@ trace_program(const char *progname, char * const *args) {
 		perror_pid("ptrace(PTRACE_SETOPTIONS)", pid);
 		exit(EXIT_FAILURE);
 	}
+
+	monitor_pid(pid, 0);
 	dump_wait_state(pid, wait_status, 0);
 
 	printf("Parent attached\n");
@@ -1343,6 +1424,8 @@ trace_program(const char *progname, char * const *args) {
 				exit(EXIT_FAILURE);
 			}
 
+			monitor_pid(cpid, 1);
+
 			if (ptrace(PTRACE_CONT, cpid, NULL, 0) < 0) {
 				perror_pid("ptrace(PTRACE_CONT) [5]", cpid);
 				exit(EXIT_FAILURE);
@@ -1395,6 +1478,29 @@ trace_program(const char *progname, char * const *args) {
 	return 0;
 }
 
+#define PG	4096
+void
+balloon(void) {
+	size_t all_sizes[] = { PG*1024, PG*1024, PG*1024*4, PG*1024*8, PG*1024*16, PG*1024*32, PG*1024*64, PG*1024*128, PG*1024*128 };
+	size_t i, fd;
+
+	if ((fd = open("/dev/zero", O_RDWR)) == -1) {
+		PERROR("open(/dev/zero)");
+		return;
+	}
+
+	for (i = 0; i < sizeof(all_sizes)/sizeof(all_sizes[0]); i++) {
+		void *buf;
+
+		if (!(buf = mmap(NULL, all_sizes[i], PROT_READ|PROT_WRITE, MAP_PRIVATE, fd, 0))) {
+			PERROR("mmap");
+			return;
+		}
+
+	}
+
+	return;
+}
 
 int
 main(int argc, char *argv[]) {
@@ -1419,6 +1525,8 @@ main(int argc, char *argv[]) {
         cfg_sh.fmt_colors = 1;
         cfg_sh.braces = 1;
         cfg_sh.resolve_syms = 1;
+
+	balloon();
 
 	if (audit_init(&cfg, argc, argv, environ) < 0) {
 		fprintf(stderr, "Error encountered in initialization! Aborting.\n");

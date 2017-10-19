@@ -11,6 +11,27 @@ const mmap_prot (
 	PROT_GROWSUP   = 0x02000000
 )
 
+// Incomplete
+const errno (
+	EPERM     =  1
+	ENOENT    =  2
+	ESRCH     =  3
+	EINTR     =  4
+	EIO       =  5
+	ENXIO     =  6
+	E2BIG     =  7
+	ENOEXEC   =  8
+	EBADF     =  9
+	ECHILD    = 10
+	EAGAIN    = 11
+	ENOMEM    = 12
+	EACCES    = 13
+	EFAULT    = 14
+	ENOTBLK   = 15
+	EBUSY     = 16
+)
+
+
 
 func runtime.gcenable()
 func runtime.osinit()
@@ -93,6 +114,8 @@ func runtime.exitsyscall(dummy int32)
 func runtime.exitsyscallfast() bool
 //func asmcgocall(fn, arg unsafe.Pointer) int32
 func runtime.asmcgocall(fn unsafe.Pointer, arg unsafe.Pointer) int32
+func runtime.entersyscallblock(dummy int32)
+func syscall.errnoErr(e Errno=errno) error
 
 func runtime.getcallerpc/p() uintptr
 func runtime.getcallersp/p(argp unsafe.Pointer) uintptr
@@ -107,6 +130,13 @@ func runtime.notetsleep(n *note, ns int64) bool
 func runtime.nanotime() int64
 func runtime.timediv(v int64, div int32, rem *int32)
 func runtime.timerproc(tb *timersBucket)
+func runtime.notetsleep(n *note, ns int64) bool
+func runtime.notetsleepg(n *note, ns int64) bool
+func runtime.notesleep(n *note)
+func runtime.notewakeup(n *note)
+func timer.Sleep(d Duration)
+func runtime.addtimer(t *timer)
+func runtime.deltimer(t *timer) bool
 
 // Errors
 func errors.New(text string) error
@@ -162,6 +192,9 @@ func runtime.runqsteal(_p_ *p, p2 *p, stealRunNextG bool) *g
 //func runqgrab(_p_ *p, batch *[256]guintptr, batchHead uint32, stealRunNextG bool) uint32
 func runtime.runqgrab(_p_ *p, batch *guintptr, batchHead uint32, stealRunNextG bool) uint32
 func runtime.runqget(_p_ *p) (gp *g, inheritTime bool)
+func runtime.goready(gp *g, traceskip int)
+//func mcall(fn func(*g))
+func runtime.mcall(fn pfn)
 
 func runtime.return0()
 //func systemstack(fn func())
@@ -175,6 +208,7 @@ func runtime.pidleput(_p_ *p)
 func runtime.readgstatus(gp *g) uint32
 func runtime.execute(gp *g, inheritTime bool)
 func runtime.procyield(cycles uint32)
+//func runtime.ready(gp *g, traceskip int, next bool)
 
 func runtime.findfunc(pc uintptr) funcInfo
 
@@ -191,3 +225,16 @@ func runtime.netpollinited() bool
 func runtime\internal\atomic.Load(ptr *uint32) uint32
 func runtime\internal\atomic.Load64(ptr *uint64) uint64
 func runtime\internal\atomic.Xchg(ptr *uint32, new uint32) uint32
+
+func runtime.aeshashstr(p unsafe.Pointer, h uintptr) uintptr
+func runtime.aeshash32(p unsafe.Pointer, h uintptr) uintptr
+func runtime.aeshash64(p unsafe.Pointer, h uintptr) uintptr
+func runtime.aeshashstr(p unsafe.Pointer, h uintptr) uintptr
+
+// Strings
+func strings.IndexByte(s string, c byte) int
+func runtime.findnull(s *byte) int
+//func runtime.gostring(p *byte) string
+
+// Bytes
+func IndexByte(s []byte, c byte) int

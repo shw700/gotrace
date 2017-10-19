@@ -5,3 +5,8 @@ support lookups on itabs
 can slice be read in before pass-off to arch-general display funcs?
 getenv() is now broken in injected module code
 * get libgomod.so from same dir as exe; make name automatic from build
+* forced decoding on function returns doesn't seem to be working anymore
+* doesn't return a value: func strings.IndexByte(s string, c byte) int
+* runtime.gostring() creates error
+* force re-launch on address space mapping conflict
+* disappearing functions with the addition of tgkill()
