@@ -216,9 +216,6 @@ func runtime.findfunc(pc uintptr) funcInfo
 //func makeslice(et *_type, len, cap int) slice
 func runtime.makeslice(et *_type, len int, cap int) slice
 
-// Strings
-func strings.IndexByte(s string, c byte)
-
 // Network
 func runtime.netpollinited() bool
 
@@ -226,15 +223,14 @@ func runtime\internal\atomic.Load(ptr *uint32) uint32
 func runtime\internal\atomic.Load64(ptr *uint64) uint64
 func runtime\internal\atomic.Xchg(ptr *uint32, new uint32) uint32
 
-func runtime.aeshashstr(p unsafe.Pointer, h uintptr) uintptr
-func runtime.aeshash32(p unsafe.Pointer, h uintptr) uintptr
-func runtime.aeshash64(p unsafe.Pointer, h uintptr) uintptr
-func runtime.aeshashstr(p unsafe.Pointer, h uintptr) uintptr
+func runtime.aeshashstr(p unsafe.Pointer, h uintptr) uintptr/x
+func runtime.aeshash32(p unsafe.Pointer, h uintptr) uintptr/x
+func runtime.aeshash64(p unsafe.Pointer, h uintptr) uintptr/x
 
 // Strings
 func strings.IndexByte(s string, c byte) int
 func runtime.findnull(s *byte) int
-//func runtime.gostring(p *byte) string
+func runtime.gostring(p *byte) string
 
 // Bytes
 func IndexByte(s []byte, c byte) int

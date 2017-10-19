@@ -285,6 +285,7 @@ void dump_wait_state(pid_t pid, int status, int force);
 void dump_instruction_state(pid_t pid);
 char *read_bytes_remote(pid_t pid, char *addr, size_t slen);
 int write_bytes_remote(pid_t pid, void *addr, void *buf, size_t blen);
+int check_vma_collision(pid_t pid1, pid_t pid2, int exclude_vsyscall, int exclude_self);
 
 
 
@@ -409,7 +410,7 @@ typedef struct __attribute__((packed)) gomod_data_hdr {
 } gomod_data_hdr_t;
 
 
-#define GOMOD_LIB_NAME		"libgomod.so.0.1.1"
+#define GOMOD_LIB_NAME		"libgomod.so."CONFIG_VERSION
 #define GOMOD_INIT_FUNC		"_gomod_init"
 
 

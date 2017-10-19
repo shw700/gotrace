@@ -471,11 +471,10 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 				continue;
 
 			if ((kret = tgkill(master_pid, observed_pids[j], SIGUSR1)) == -1) {
+				perror_pid("tgkill", observed_pids[j]);
 
 				if (errno == ESRCH)
 					monitor_pid(observed_pids[j], 1);
-
-				perror_pid("tgkill", observed_pids[j]);
 			}
 
 		}
@@ -509,7 +508,8 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 		}
 
 		if (ra == saved_ret_prolog_entries) {
-			PRINT_ERROR("Unexpected error: trace trap not at known intercept point (%p).\n", hot_pc);
+			PRINT_ERROR("Unexpected error: trace trap (%d) not at known intercept point (%p).\n",
+				pid, hot_pc);
 			print_instruction(pid, (void *)hot_pc, 16);
 			return -1;
 		}
@@ -1211,10 +1211,13 @@ set_fs_base_remote(pid_t pid, unsigned long base) {
 	return 0;
 }
 
+#define MAX_RETRIES	3
+
 int
 trace_program(const char *progname, char * const *args) {
 	pid_t pid;
 	int wait_status;
+	static size_t nretries = 0;
 
 	printf("Attempting to trace...: %s\n", progname);
 
@@ -1278,11 +1281,42 @@ trace_program(const char *progname, char * const *args) {
 			struct user_regs_struct regs;
 //			char **needed;
 			void *dlhandle, *initfunc = NULL; //, *reloc_base = NULL;
-			const char *libname = GOMOD_LIB_NAME;
+			char libpath[512];
 			signed long our_fs, old_fs;
 			int pres;
 
-			if ((dlhandle = dlopen(libname, RTLD_NOW|RTLD_DEEPBIND)) == NULL) {
+			if (check_vma_collision(getpid(), pid, 1, 1)) {
+				PRINT_ERROR("%s", "Error: possible VMA collision. Killing traced process...\n");
+				kill(pid, SIGKILL);
+				monitor_pid(pid, 1);
+
+				if (nretries < MAX_RETRIES) {
+					nretries++;
+					PRINT_ERROR("Retrying execution... attempt %zu of %u\n",
+						nretries, MAX_RETRIES);
+					return (trace_program(progname, args));
+				}
+
+				PRINT_ERROR("%s", "Reached maximum # retries. Aborting.\n");
+				exit(EXIT_FAILURE);
+			}
+
+			if (readlink("/proc/self/exe", libpath, sizeof(libpath)) == -1) {
+				PERROR("readlink");
+				strncpy(libpath, GOMOD_LIB_NAME, sizeof(libpath));
+			} else {
+				char *last = strrchr(libpath, '/');
+
+				if (!last)
+					strncpy(libpath, GOMOD_LIB_NAME, sizeof(libpath));
+				else {
+					last++;
+					strncpy(last, GOMOD_LIB_NAME, sizeof(libpath)-strlen(libpath));
+				}
+
+			}
+
+			if ((dlhandle = dlopen(libpath, RTLD_NOW|RTLD_DEEPBIND)) == NULL) {
 				PRINT_ERROR("dlopen(): %s", dlerror());
 				exit(EXIT_FAILURE);
 			}
@@ -1467,7 +1501,7 @@ trace_program(const char *progname, char * const *args) {
 
 		if (ptrace(PTRACE_CONT, cpid, NULL, 0) < 0) {
 			perror_pid("ptrace(PTRACE_CONT) [2]", cpid);
-			exit(EXIT_FAILURE);
+//			exit(EXIT_FAILURE);
 		}
 
 	}

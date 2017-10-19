@@ -934,10 +934,21 @@ typedef struct vmap_region {
 	unsigned long start;
 	unsigned long end;
 	int prot;
+	char *objname;
 	void *new_base;
 } vmap_region_t;
 
 #define MAX_VMA 16
+
+#define DESTROY_VMAP(vmaps,n)	do {	\
+					size_t i;	\
+					for (i = 0; i < n; i++) {	\
+						if (vmaps[i].objname) {	\
+							free(vmaps[i].objname);	\
+							vmaps[i].objname = NULL;	\
+						}	\
+					}	\
+				} while (0)
 
 
 int
@@ -1129,34 +1140,20 @@ open_dso_and_get_segments(const char *soname, pid_t pid, void **pinit_func, void
 	return 0;
 }
 
-#define MAX_REPLICATE_VMA 128
-
 int
-replicate_process_remotely(pid_t pid) {
-	char exename[PATH_MAX+1], exelookup[64];
-	vmap_region_t vmas[MAX_REPLICATE_VMA];
+parse_process_maps(pid_t pid, vmap_region_t *vmas, size_t nvmas) {
 	FILE *f;
-	size_t vind = 0, i;
+	char mappath[32];
+	size_t vind = 0;
 
-	memset(exename, 0, sizeof(exename));
-	snprintf(exelookup, sizeof(exelookup), "/proc/self/exe");
+	snprintf(mappath, sizeof(mappath), "/proc/%d/maps", pid);
 
-	if (!(realpath(exelookup, exename))) {
-		PERROR("realpath");
+	if ((f = fopen(mappath, "r")) == NULL) {
+		perror_pid("fopen(/proc/pid/maps", 0);
 		return -1;
 	}
 
-	signal(SIGBUS, school_bus);
-
-	if ((f = fopen("/proc/self/maps", "r")) == NULL) {
-		perror_pid("fopen(/proc/self/maps", 0);
-		return -1;
-	}
-
-	memset(vmas, 0, sizeof(vmas));
-
-	char last_named[256];
-	memset(last_named, 0, sizeof(last_named));
+	memset(vmas, 0, (sizeof(vmap_region_t) * nvmas));
 
 	while (!feof(f)) {
 		unsigned long start, end;
@@ -1185,18 +1182,7 @@ replicate_process_remotely(pid_t pid) {
 		if ((!strtok(NULL, " ")) || (!strtok(NULL, " ")))
 			continue;
 
-		if ((objname = tok = strtok(NULL, " "))) {
-			if (!strcmp(objname, "[vsyscall]")) {
-				PRINT_ERROR("Skipping over vsyscall entry: %s\n", range);
-				continue;
-			} else if (!strcmp(objname, exename)) {
-				PRINT_ERROR("Skipping over self exe: %s\n", objname);
-				continue;
-			}
-		}
-
-		if (objname && *objname && (!strcmp(objname, "/dev/zero")))
-			continue;
+		objname = tok = strtok(NULL, " ");
 
 		if (!(hyph = strchr(range, '-')))
 			continue;
@@ -1219,19 +1205,10 @@ replicate_process_remotely(pid_t pid) {
 		if (err)
 			continue;
 
-		errno = 0;
-		ptrace(PTRACE_PEEKDATA, pid, start, 0);
-		if (!errno)
-			PRINT_ERROR("Warning: peek failed at %p\n", (void *)start);
-		else {
-			ptrace(PTRACE_PEEKDATA, pid, end, 0);
-			if (!errno)
-				PRINT_ERROR("Warning: peek failed at %p\n", (void *)end);
-		}
-
 		vmas[vind].start = start;
 		vmas[vind].end = end;
 		vmas[vind].prot = 0;
+		vmas[vind].objname = objname ? strdup(objname) : NULL;
 
 		if (strchr(perms, 'r'))
 			vmas[vind].prot |= PROT_READ;
@@ -1242,22 +1219,86 @@ replicate_process_remotely(pid_t pid) {
 
 		vind++;
 
-		if (vind == MAX_REPLICATE_VMA) {
+		if (vind >= (nvmas - 1)) {
 			PRINT_ERROR("%s", "Unexpected high number of mapped virtual memory areas; exiting scan.\n");
-			break;
+			fclose(f);
+			return 1;
 		}
 
 	}
 
-	for (i = 0; i < vind; i++) {
+	return 0;
+}
+
+#define MAX_REPLICATE_VMA 128
+
+int
+replicate_process_remotely(pid_t pid) {
+	char exename[PATH_MAX+1], exelookup[64];
+	vmap_region_t vmas[MAX_REPLICATE_VMA+1];
+	size_t i = 0;
+
+	memset(exename, 0, sizeof(exename));
+	snprintf(exelookup, sizeof(exelookup), "/proc/self/exe");
+
+	if (!(realpath(exelookup, exename))) {
+		PERROR("realpath");
+		return -1;
+	}
+
+	if (parse_process_maps(getpid(), vmas, MAX_REPLICATE_VMA+1) < 0) {
+		PRINT_ERROR("Error parsing process maps: %d\n", getpid());
+		return -1;
+	}
+
+	signal(SIGBUS, school_bus);
+
+	while (vmas[i].end != 0) {
 		void *v;
+
+		if (vmas[i].objname) {
+
+			if (!strcmp(vmas[i].objname, "[vsyscall]")) {
+				PRINT_ERROR("Skipping over vsyscall entry: %p <-> %p\n",
+					(void *)vmas[i].start, (void *)vmas[i].end);
+				i++;
+				continue;
+			} else if (!strcmp(vmas[i].objname, exename)) {
+				PRINT_ERROR("Skipping over self exe: %s\n", vmas[i].objname);
+				i++;
+				continue;
+			} else if (!strcmp(vmas[i].objname, "/dev/zero")) {
+				i++;
+				continue;
+			}
+
+		}
+
+		errno = 0;
+		ptrace(PTRACE_PEEKDATA, pid, vmas[i].start, 0);
+		if (!errno)
+			PRINT_ERROR("Warning: peek failed at %p\n", (void *)vmas[i].start);
+		else {
+			ptrace(PTRACE_PEEKDATA, pid, vmas[i].end, 0);
+			if (!errno)
+				PRINT_ERROR("Warning: peek failed at %p\n", (void *)vmas[i].end);
+		}
 
 		v = get_local_vma(vmas[i].start, vmas[i].end-vmas[i].start, vmas[i].prot, NULL);
 		vmas[i].new_base = v;
 		PRINT_ERROR("v = %p\n", v);
+
+		i++;
 	}
 
-	for (i = 0; i < vind; i++) {
+	i = 0;
+
+	while (vmas[i].end != 0) {
+
+		if (!vmas[i].new_base) {
+			i++;
+			continue;
+		}
 
 		if (!(get_remote_vma(pid, (unsigned long)vmas[i].new_base, vmas[i].end-vmas[i].start, vmas[i].prot, (void *)vmas[i].start))) {
 			char execbuf[128];
@@ -1265,10 +1306,96 @@ replicate_process_remotely(pid_t pid) {
 			PRINT_ERROR("VMA error in mapping: %p -> %p\n", (void *)vmas[i].start, (void *)vmas[i].end);
 			sprintf(execbuf, "cat /proc/%d/maps", pid);
 			system(execbuf);
+			DESTROY_VMAP(vmas, MAX_REPLICATE_VMA);
 			return -1;
+		}
+
+		i++;
+	}
+
+	DESTROY_VMAP(vmas, MAX_REPLICATE_VMA);
+	return 0;
+}
+
+int
+do_intersect(vmap_region_t *region1, vmap_region_t *region2) {
+
+	if ((region1->start >= region2->start) && (region1->start < region2->end))
+		return 1;
+	else if ((region1->end <= region2->end) && (region1->end > region2->start))
+		return 1;
+
+	return 0;
+}
+
+#define VSYSCALL_NAME	"[vsyscall]"
+int
+check_vma_collision(pid_t pid1, pid_t pid2, int exclude_vsyscall, int exclude_self) {
+	vmap_region_t vr1[MAX_REPLICATE_VMA], vr2[MAX_REPLICATE_VMA];
+	char exename1[PATH_MAX+1], exename2[PATH_MAX+1];
+	int r1, r2;
+	size_t i, j;
+	int ret = 0;
+
+	if ((r1 = parse_process_maps(pid1, vr1, MAX_REPLICATE_VMA)) < 0)
+		return -1;
+
+	if ((r2 = parse_process_maps(pid2, vr2, MAX_REPLICATE_VMA)) < 0) {
+		DESTROY_VMAP(vr1, MAX_REPLICATE_VMA);
+		return -1;
+	}
+
+	if ((r1 > 0) || (r2 > 0))
+		PRINT_ERROR("%s", "Warning: collision comparison might be bad because of VMA overflow\n");
+
+	if (exclude_self) {
+		char exelookup1[32], exelookup2[32];
+		int err = 0;
+
+		memset(exename1, 0, sizeof(exename1));
+		memset(exename2, 0, sizeof(exename2));
+		snprintf(exelookup1, sizeof(exelookup1), "/proc/%d/exe", pid1);
+		snprintf(exelookup2, sizeof(exelookup2), "/proc/%d/exe", pid2);
+
+		if (!(realpath(exelookup1, exename1))) {
+			PERROR("realpath");
+			err = 1;
+		} else if (!(realpath(exelookup2, exename2))) {
+			PERROR("realpath");
+			err = 1;
+		}
+
+		if (err) {
+			exclude_self = 0;
+			PRINT_ERROR("%s", "Warning: could not lookup processes so collision detection might not work match self properly.\n");
 		}
 
 	}
 
-	return 0;
+	for (i = 0; (i < MAX_REPLICATE_VMA) && (vr1[i].end != 0); i++) {
+
+		for (j = 0; (j < MAX_REPLICATE_VMA) && (vr2[j].end != 0); j++) {
+
+			if (exclude_vsyscall && ((vr1[i].objname && (!strcmp(vr1[i].objname, VSYSCALL_NAME))) ||
+				(vr2[j].objname && (!strcmp(vr2[j].objname, VSYSCALL_NAME)))))
+				continue;
+
+			if (exclude_self && vr1[i].objname && (!strcmp(vr1[i].objname, exename1)))
+				continue;
+			else if (exclude_self && vr2[j].objname && (!strcmp(vr2[j].objname, exename2)))
+				continue;
+
+			if (do_intersect(&vr1[i], &vr2[j])) {
+				PRINT_ERROR("Warning: VMA intersection detected: %p-%p (%d) / %s | %p-%p (%d) / %s\n",
+					(void *)vr1[i].start, (void *)vr1[i].end, pid1, vr1[i].objname,
+					(void *)vr2[j].start, (void *)vr2[j].end, pid2, vr2[j].objname);
+				ret = 1;
+			}
+
+		}
+	}
+
+	DESTROY_VMAP(vr1, MAX_REPLICATE_VMA);
+	DESTROY_VMAP(vr2, MAX_REPLICATE_VMA);
+	return ret;
 }

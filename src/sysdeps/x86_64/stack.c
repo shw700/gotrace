@@ -988,7 +988,7 @@ int lt_stack_process_ret(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 
 	if (cfg->fmt_colors) {
 		char *fmtptr;
-		size_t left = data->arglen - data->args_totlen;
+		size_t left = data->args_len - data->args_totlen;
 
 		if (left < strlen(ULINEOFF))
 			fmtptr = data->args_buf + data->args_totlen - (strlen(ULINEOFF) + 1);
