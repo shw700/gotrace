@@ -1574,6 +1574,7 @@ static int getstr_pod(struct lt_config_shared *cfg, pid_t pid, int dspname, stru
 	if (alen < 5)
 		return 0;
 
+#define MAX_SLICE_DISP_SIZE	1024
 	if (arg->pointer == -1) {
 		char *d1 = dspname ? arg->name : "";
 		char *d2 = dspname ? LT_EQUAL : "";
@@ -1583,7 +1584,7 @@ static int getstr_pod(struct lt_config_shared *cfg, pid_t pid, int dspname, stru
 		is_byte_string = ((arg->type_id == LT_ARGS_TYPEID_CHAR) || (arg->type_id == LT_ARGS_TYPEID_INT8) ||
 			(arg->type_id == LT_ARGS_TYPEID_UINT8));
 
-		if (!is_byte_string) {
+		if (!is_byte_string || (psize > MAX_SLICE_DISP_SIZE)) {
 			len = snprintf(argbuf, alen, "%s%s[%zu]{...}", d1, d2, psize);
 			goto out;
 		}
@@ -1816,6 +1817,26 @@ do {                                                                 \
 //		case LT_ARGS_TYPEID_DOUBLE:  ARGS_SPRINTF("%lf", double); break;
 //		case LT_ARGS_TYPEID_FLOAT:   ARGS_SPRINTF("%f", float); break;
 	#undef ARGS_SPRINTF
+		case LT_ARGS_TYPEID_INT8:
+		case LT_ARGS_TYPEID_UINT8:
+		{
+			unsigned char bbyte = (unsigned char)((uintptr_t)pval);
+			char bbuf[8];
+
+			if (isalnum(bbyte) || ispunct(bbyte) || (bbyte == ' '))
+				sprintf(bbuf, "'%c'", bbyte);
+			else if (bbyte == '\n')
+				strcpy(bbuf, "\\n");
+			else if (bbyte == '\r')
+				strcpy(bbuf, "\\r");
+			else if (bbyte == '\t')
+				strcpy(bbuf, "\\t");
+			else
+				sprintf(bbuf, "0x%.2x", bbyte);
+
+			len = snprintf(argbuf, alen, "%s", bbuf);
+			break;
+		}
 		case LT_ARGS_TYPEID_BOOL:
 		{
 			long bval = (long)pval;

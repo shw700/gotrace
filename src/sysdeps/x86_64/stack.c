@@ -26,6 +26,18 @@
 #include <sys/user.h>
 
 
+typedef struct argument_watch {
+	char *funcname;
+	int do_entry;
+	int do_exit;
+	size_t nbytes;
+} argument_watch_t;
+
+argument_watch_t argument_watchlist[] = {
+//	{ "runtime.epollwait", 1, 0, 48}
+};
+
+
 #define ASS_CLEANUP() \
 do { \
 	tsd->ass_integer = tsd->ass_memory = 0; \
@@ -453,6 +465,8 @@ static void *get_value(struct lt_config_shared *cfg, struct lt_arg *arg, pid_t t
 //	void *pval = NULL;
 	long val, sp_off = regs->rsp;
 	size_t extra_off = 0, vsize = 0;
+	int req_align = 0;
+
 	*err = 1;
 
 	/* Skip the return value for first parameter */
@@ -460,6 +474,15 @@ static void *get_value(struct lt_config_shared *cfg, struct lt_arg *arg, pid_t t
 		extra_off += sizeof(void *);
 
 	sp_off += offset + extra_off;
+
+	// If we've been reading smaller data types off the stack but then require a word sized one,
+	// we need to skip over the remaining stack space to align our request.
+	req_align = (arg->pointer == -1) || (arg->pointer > 0) || (arg->type_id == LT_ARGS_TYPEID_STRING);
+
+	if (req_align && (sp_off % sizeof(void *))) {
+		extra_off += (sp_off % sizeof(void *));
+		sp_off += (sp_off % sizeof(void *));
+	}
 
 	errno = 0;
 	val = ptrace(PTRACE_PEEKDATA, target, sp_off, 0);
@@ -527,15 +550,19 @@ static void *get_value(struct lt_config_shared *cfg, struct lt_arg *arg, pid_t t
 //		unsigned long oval=val;
 
 		if ((arg->type_id == LT_ARGS_TYPEID_INT32 || (arg->type_id == LT_ARGS_TYPEID_UINT32))) {
-			*next_off = offset + sizeof(int32_t);
-			val >>= 32;
+			*next_off = offset + extra_off + sizeof(int32_t);
+//			val >>= 32;
 			val &= 0x00000000ffffffff;
 			vsize = 4;
 		} else if ((arg->type_id == LT_ARGS_TYPEID_INT16 || (arg->type_id == LT_ARGS_TYPEID_UINT16))) {
-			*next_off = offset + sizeof(int16_t);
-			val >>= 48;
+			*next_off = offset + extra_off + sizeof(int16_t);
+//			val >>= 48;
 			val &= 0x000000000000ffff;
 			vsize = 2;
+		} else if ((arg->type_id == LT_ARGS_TYPEID_INT8 || (arg->type_id == LT_ARGS_TYPEID_UINT8))) {
+			*next_off = offset + extra_off + sizeof(int8_t);
+			val &= 0x00000000000000ff;
+			vsize = 1;
 		} else {
 			*next_off = offset + extra_off + sizeof(void *);
 			vsize = sizeof(void *);
@@ -696,11 +723,60 @@ exit_transformer_callstack(char *symname, struct user_regs_struct *inregs, void 
 	return -1;
 }
 
+void
+stack_dump(void *buf, size_t bsize, size_t increment) {
+	unsigned char *bptr = (unsigned char *)buf;
+	size_t i, nleft = bsize;
+
+	PRINT_ERROR("Dump buffer (%zu bytes): ", bsize);
+
+	while (nleft) {
+		size_t maxread;
+
+		maxread = nleft >= increment ? increment : nleft;
+
+		for (i = 0; i < maxread; i++) {
+			PRINT_ERROR("%.2x", *bptr);
+			bptr++;
+		}
+
+		PRINT_ERROR("%s", " ");
+
+		if (nleft <= increment)
+			break;
+
+		nleft -= increment;
+	}
+
+	PRINT_ERROR("%s", "\n");
+	return;
+}
+
 int lt_stack_process(struct lt_config_shared *cfg, struct lt_args_sym *asym, 
 			pid_t target, struct user_regs_struct *regs, struct lt_args_data *data, int silent,
 			lt_tsd_t *tsd)
 {
 	int i;
+
+	for (i = 0; i < sizeof(argument_watchlist)/sizeof(argument_watchlist[0]); i++) {
+
+		if (argument_watchlist[i].do_entry && (!strcmp(argument_watchlist[i].funcname, asym->name))) {
+			void *stack_data;
+
+			stack_data = read_string_remote(target, (void *)regs->rsp, argument_watchlist[i].nbytes);
+
+			if (!stack_data) {
+				PRINT_ERROR("Error reading debug bytes from stack for function entry point: %s\n", asym->name);
+				break;
+			}
+
+			stack_dump(stack_data, argument_watchlist[i].nbytes, 4);
+			free(stack_data);
+			break;
+		}
+
+	}
+
 
 //	printf("+++ lt_stack_process(): %s\n", asym->name);
 //	printf("+++ sp = %p\n", (void *)regs->rsp);
@@ -885,9 +961,14 @@ int lt_stack_process_ret(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 
 		ret_offset += sizeof(void *);
 
-		if (arg->type_id == LT_ARGS_TYPEID_STRING) {
+		// XXX: This should be calling a version of get_value() that only returns offsets.
+
+		// Slice
+		if (arg->pointer == -1)
+			ret_offset += sizeof(void *) * 2;
+		else if (arg->type_id == LT_ARGS_TYPEID_STRING)
 			ret_offset += sizeof(void *);
-		}
+
 	}
 
 	for (i = 0; i < asym->rargcnt; i++) {

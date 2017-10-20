@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <fcntl.h>
 #include <sys/ptrace.h>
+#include <linux/wait.h>
 #include <signal.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -16,7 +17,7 @@
 #include <asm/prctl.h>
 #include <sys/prctl.h>
 
-// TODO: waitpid(..., WUNTRACED), _WALL
+// TODO: waitpid(..., WUNTRACED), __WALL
 
 #include "config.h"
 #include "elfh.h"
@@ -107,7 +108,16 @@ char *excluded_intercepts[] = {
 };
 
 pid_t master_pid = -1;
-pid_t observed_pids[1024];
+
+
+#define FLAG_TRAP_INTERRUPTED	0x1
+
+typedef struct process_state {
+	pid_t pid;
+	int flags;
+} process_state_t;
+
+process_state_t observed_pids[1024];
 
 
 char *read_bytes_remote(pid_t pid, char *addr, size_t slen);
@@ -124,11 +134,12 @@ int set_all_intercepts(pid_t pid);
 int set_intercept(pid_t pid, void *addr);
 int set_ret_intercept(pid_t pid, const char *fname, void *addr, size_t *pidx);
 int is_intercept_excluded(const char *fname);
+int set_pid_flags(pid_t pid, int flags);
 
 int save_remote_intercept(pid_t pid, const char *fname, void *addr, int is_entry);
 
 void monitor_pid(pid_t pid, int do_remove);
-int is_pid_monitored(pid_t pid);
+int is_pid_monitored(pid_t pid, int *pflags);
 
 void cleanup(void);
 void handle_int(int signo);
@@ -141,12 +152,12 @@ monitor_pid(pid_t pid, int do_remove) {
 
 	for (i = 0; i < sizeof(observed_pids)/sizeof(observed_pids[0]); i++) {
 
-		if (!observed_pids[i])
+		if (!observed_pids[i].pid)
 			first_empty = i;
-		else if (observed_pids[i] == pid) {
+		else if (observed_pids[i].pid == pid) {
 
 			if (do_remove)
-				observed_pids[i] = 0;
+				observed_pids[i].pid = 0;
 
 			return;
 		}
@@ -154,19 +165,43 @@ monitor_pid(pid_t pid, int do_remove) {
 	}
 
 	if (first_empty >= 0)
-		observed_pids[first_empty] = pid;
+		observed_pids[first_empty].pid = pid;
 
 	return;
 }
 
 int
-is_pid_monitored(pid_t pid) {
+is_pid_monitored(pid_t pid, int *pflags) {
 	size_t i;
 
 	for (i = 0; i < sizeof(observed_pids)/sizeof(observed_pids[0]); i++) {
 
-		if (observed_pids[i] == pid)
+		if (observed_pids[i].pid == pid) {
+
+			if (pflags)
+				*pflags = observed_pids[i].flags;
+
 			return 1;
+		}
+
+	}
+
+	if (pflags)
+		*pflags = 0;
+
+	return 0;
+}
+
+int
+set_pid_flags(pid_t pid, int flags) {
+	size_t i;
+
+	for (i = 0; i < sizeof(observed_pids)/sizeof(observed_pids[0]); i++) {
+
+		if (observed_pids[i].pid == pid) {
+			observed_pids[i].flags = flags;
+			return 1;
+		}
 
 	}
 
@@ -418,6 +453,24 @@ check_remote_intercept(pid_t pid, void *pc, struct user_regs_struct *regs) {
 	return -1;
 }
 
+const char *
+get_ptrace_event_name(int status) {
+	if ((status >> 8) == (SIGTRAP | (PTRACE_EVENT_CLONE << 8)))
+		return "clone";
+	else if ((status >> 8) == (SIGTRAP | (PTRACE_EVENT_EXEC << 8)))
+		return "exec";
+	else if ((status >> 8) == (SIGTRAP | (PTRACE_EVENT_EXIT << 8)))
+		return "exit";
+	else if ((status >> 8) == (SIGTRAP | (PTRACE_EVENT_FORK << 8)))
+		return "fork";
+	else if ((status >> 8) == (SIGTRAP | (PTRACE_EVENT_VFORK << 8)))
+		return "vfork";
+	else if ((status >> 8) == (SIGTRAP | (PTRACE_EVENT_VFORK_DONE << 8)))
+		return "vfork_done";
+
+	return "none";
+}
+
 int
 handle_trace_trap(pid_t pid, int status, int dont_reset) {
 	struct lt_symbol *lts;
@@ -426,7 +479,7 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 	const char *symname;
 	long retrace, ret_addr;
 	size_t i, ra;
-	int ret, is_return = 0;
+	int pflags, ret, is_return = 0;
 
 /*	if (WIFSTOPPED(status) && WSTOPSIG(status) == SIGUSR1) {
 		fprintf(stderr, "SIGUSR1 OK\n");
@@ -498,6 +551,8 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 		if (ra == saved_ret_prolog_entries) {
 			PRINT_ERROR("Unexpected error: trace trap (%d) not at known intercept point (%p).\n",
 				pid, hot_pc);
+//			dump_instruction_state(pid);
+//			dump_wait_state(pid, status, 1);
 			print_instruction(pid, (void *)hot_pc, 16);
 			return -1;
 		}
@@ -516,22 +571,21 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 		for (j = 0; j < sizeof(observed_pids)/sizeof(observed_pids[0]); j++) {
 			int kret;
 
-			if (!observed_pids[j])
+			if (!observed_pids[j].pid)
 				continue;
-			else if (observed_pids[j] == pid)
+			else if (observed_pids[j].pid == pid)
 				continue;
 
-			if ((kret = tgkill(master_pid, observed_pids[j], SIGSTOP)) == -1) {
-				perror_pid("tgkill", observed_pids[j]);
+			if ((kret = tgkill(master_pid, observed_pids[j].pid, SIGSTOP)) == -1) {
+				perror_pid("tgkill", observed_pids[j].pid);
 
 				if (errno == ESRCH)
-					monitor_pid(observed_pids[j], 1);
+					monitor_pid(observed_pids[j].pid, 1);
 			}
 
 		}
 
 	}
-
 
 	if (!is_return) {
 		size_t ridx;
@@ -581,12 +635,20 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 	lts = lt_symbol_bind(cfg.sh, hot_pc, symname);
 	lt_tsd_t *tsdx = thread_get_tsd(pid, 1);
 
-	if (is_return) {
-		ret = sym_exit(symname, lts, "from", "to", pid, &regs, &regs, tsdx);
-//		return 1;
-	} else {
-//	fprintf(stderr, "HEH: %d / %s / %p\n", pid, symname, tsdx);
-		ret = sym_entry(symname, lts, "from", "to", pid, &regs, tsdx);
+	if (!is_pid_monitored(pid, &pflags))
+		PRINT_ERROR("%s", "Warning: unable to get traced process flags. Weirdness may ensue...\n");
+
+//	fprintf(stderr, "Func %s entering: %d / %x\n", symname, is_return ? 0 : 1);
+
+	if (!(pflags & FLAG_TRAP_INTERRUPTED)) {
+		if (is_return) {
+			ret = sym_exit(symname, lts, "from", "to", pid, &regs, &regs, tsdx);
+	//		return 1;
+		} else {
+	//	fprintf(stderr, "HEH: %d / %s / %p\n", pid, symname, tsdx);
+			ret = sym_entry(symname, lts, "from", "to", pid, &regs, tsdx);
+		}
+
 	}
 
 	if (ret < 0) {
@@ -599,17 +661,19 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 		return -1;
 	}
 
-	int wait_status = 0;
-
 	while (1) {
+		int wait_status = 0;
 
-		if (waitpid(pid, &wait_status, 0) < 0) {
+		if (waitpid(pid, &wait_status, __WALL) < 0) {
 			perror_pid("waitpid", pid);
 			return -1;
 		}
 
 		if (WIFSTOPPED(wait_status) && ((WSTOPSIG(wait_status) == SIGSTOP))) {
-//			PRINT_ERROR("Continuing on SIGSTOP receipt (%d)\n", pid);
+
+			if (!set_pid_flags(pid, pflags | FLAG_TRAP_INTERRUPTED))
+				PRINT_ERROR("%s", "Warning: unable to set traced process flags. Weirdness may ensue...\n");
+
 			break;
 
 /*			if (ptrace(PTRACE_CONT, pid, 0, 0) == -1) {
@@ -618,6 +682,11 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 			}
 
 			continue; */
+		} else {
+
+			if (!set_pid_flags(pid, pflags & ~(FLAG_TRAP_INTERRUPTED)))
+				PRINT_ERROR("%s", "Warning: unable to set traced process flags. Weirdness may ensue...\n");
+
 		}
 
 		if (!WIFSTOPPED(wait_status) || (WSTOPSIG(wait_status) != SIGTRAP)) {
@@ -628,6 +697,8 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 
 		break;
 	}
+
+//	fprintf(stderr, "Func %s made it through: %d\n", symname, is_return ? 0 : 1);
 
 	if (is_return) {
 		retrace = saved_ret_prologs[ra].saved_prolog;
@@ -658,7 +729,7 @@ analyze_clone_call(pid_t pid, pid_t cpid) {
 		return -1;
 	}
 
-	if (waitpid(pid, &ws, 0) < 0) {
+	if (waitpid(pid, &ws, __WALL) < 0) {
 		perror_pid("waitpid", pid);
 		return -1;
 	}
@@ -670,7 +741,7 @@ analyze_clone_call(pid_t pid, pid_t cpid) {
 
 	newpid = (pid_t)regs.rax;
 	cflags = (int)regs.rdi;
-	fprintf(stderr, "XXX: New pid: %d, flags = %x\n", newpid, cflags);
+	fprintf(stderr, "XXX: clone() returned new pid: %d, flags = %x\n", newpid, cflags);
 
 	if (newpid != cpid) {
 		PRINT_ERROR("%s", "Unexpected error: pid returned by clone() did not match ptrace() query.\n");
@@ -727,28 +798,28 @@ dump_wait_state(pid_t pid, int status, int force) {
 	}
 
 	if ((status >> 8) == (SIGTRAP | (PTRACE_EVENT_CLONE << 8))) {
-		PRINT_ERROR("%s", "Detected clone() event\n");
+		PRINT_ERROR("PID %d detected clone() event", pid);
 		needs_pid = 1;
 		did_clone = 1;
 	}
 	else if ((status >> 8) == (SIGTRAP | (PTRACE_EVENT_EXEC << 8)))
-		PRINT_ERROR("%s", "Detected exec() event\n");
+		PRINT_ERROR("PID %d detected exec() event\n", pid);
 	else if ((status >> 8) == (SIGTRAP | (PTRACE_EVENT_EXIT << 8))) {
 		lt_tsd_t *tsdx = thread_get_tsd(pid, 1);
 
 		monitor_pid(pid, 1);
-		PRINT_ERROR("%s", "Detected exit() event\n");
+		PRINT_ERROR("PID %d detected exit() event\n", pid);
 		sym_exit("___________exit", NULL, "from", "to", pid, NULL, NULL, tsdx);
 	}
 	else if ((status >> 8) == (SIGTRAP | (PTRACE_EVENT_FORK << 8))) {
-		PRINT_ERROR("%s", "Detected fork() event\n");
+		PRINT_ERROR("PID %d detected fork() event", pid);
 		needs_pid = 1;
 	}
 	else if ((status >> 8) == (SIGTRAP | (PTRACE_EVENT_VFORK << 8))) {
-		PRINT_ERROR("%s", "Detected vfork() event\n");
+		PRINT_ERROR("PID %d detected vfork() event", pid);
 		needs_pid = 1;
 	} else if ((status >> 8) == (SIGTRAP | (PTRACE_EVENT_VFORK_DONE << 8)))
-		PRINT_ERROR("%s", "Detected vfork() event\n");
+		PRINT_ERROR("PID %d detected vfork() event", pid);
 
 	if (needs_pid) {
 		unsigned long msg;
@@ -761,7 +832,7 @@ dump_wait_state(pid_t pid, int status, int force) {
 
 		npid = (pid_t)msg;
 
-		PRINT_ERROR("Event generated by pid = %d\n", npid);
+		PRINT_ERROR("; event generated by pid = %d\n", npid);
 
 		if (did_clone) {
 			int cret;
@@ -773,7 +844,7 @@ dump_wait_state(pid_t pid, int status, int force) {
 				fprintf(stderr, "XXX: exempting new process from intercepts: %d\n", npid);
 			} else {
 				int w;
-				if (waitpid(npid, &w, 0) < 0) {
+				if (waitpid(npid, &w, __WALL) < 0) {
 					perror_pid("waitpid", npid);
 					exit(EXIT_FAILURE);
 				}
@@ -1154,7 +1225,7 @@ check_child_execute(pid_t pid) {
 		return -1;
 	}
 
-	if (waitpid(pid, &wait_status, 0) == -1)
+	if (waitpid(pid, &wait_status, __WALL) == -1)
 	{
 		perror_pid("waitpid", pid);
 		return -1;
@@ -1274,7 +1345,7 @@ trace_program(const char *progname, char * const *args) {
 		exit(EXIT_FAILURE);
 	} */
 
-	if (waitpid(pid, &wait_status, 0) < 0) {
+	if (waitpid(pid, &wait_status, __WALL) < 0) {
 		perror_pid("waitpid", pid);
 		exit(EXIT_FAILURE);
 	}
@@ -1294,7 +1365,7 @@ trace_program(const char *progname, char * const *args) {
 		exit(EXIT_FAILURE);
 	}
 
-	if (waitpid(pid, &wait_status, 0) < 0) {
+	if (waitpid(pid, &wait_status, __WALL) < 0) {
 		perror_pid("waitpid", pid);
 		exit(EXIT_FAILURE);
 	}
@@ -1472,7 +1543,7 @@ trace_program(const char *progname, char * const *args) {
 	while (1) {
 		pid_t cpid;
 
-		if ((cpid = waitpid(-1, &wait_status, 0)) < 0) {
+		if ((cpid = waitpid(-1, &wait_status, __WALL)) < 0) {
 			perror_pid("waitpid", -1);
 			exit(EXIT_FAILURE);
 		}

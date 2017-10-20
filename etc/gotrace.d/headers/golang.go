@@ -64,8 +64,11 @@ func runtime.persistentalloc(size uintptr, align uintptr, sysStat *uint64) unsaf
 //func persistentalloc1(size, align uintptr, sysStat *uint64) unsafe.Pointer {
 func runtime.persistentalloc1(size uintptr, align uintptr, sysStat *uint64) unsafe.Pointer
 func runtime.nextSample() int32
+//func allocm(_p_ *p, fn func()) *m
+func runtime.allocm(_p_ *p, fn pfn) *m
 
 func runtime.heapBits.initSpan(s *mspan)
+func runtime.recordspan(vh unsafe.Pointer, p unsafe.Pointer)
 //func heapBitsSetType(x, size, dataSize uintptr, typ *_type)
 func runtime.heapBitsSetType(x uintptr, size uintptr, dataSize uintptr, typ *_type)
 func progToPointerMask(prog *byte, size uintptr) bitvector
@@ -131,7 +134,7 @@ func runtime.sleep(ms int32) int32
 func runtime.usleep(usec uint32)
 func runtime.futexsleep(addr *uint32, val uint32, ns int64)
 func runtime.notetsleep(n *note, ns int64) bool
-func runtime.nanotime() int64
+func runtime.nanotime~() int64
 func runtime.timediv(v int64, div int32, rem *int32)
 func runtime.timerproc(tb *timersBucket)
 func runtime.notetsleep(n *note, ns int64) bool
@@ -146,7 +149,11 @@ func runtime.deltimer(t *timer) bool
 func errors.New(text string) error
 
 // Networking
+//func epollwait(epfd int32, ev *epollevent, nev, timeout int32) int32
+func runtime.epollwait~(epfd int32, ev *epollevent, nev int32, timeout int32) int32
+func runtime.netpollready(gpp *guintptr, pd *pollDesc, mode int32)
 func runtime.netpoll(block bool) *g
+func runtime.netpollinited() bool
 func net.IP.IsLoopback() bool
 func net.isZeros(p IP) bool
 func net.selfConnect(fd *netFD, err error) bool
@@ -203,6 +210,12 @@ func runtime.mcall(fn pfn)
 func runtime.return0()
 //func systemstack(fn func())
 func runtime.systemstack(fn pfn)
+//func sigaltstack(new, old *stackt)
+func runtime.sigaltstack(new *stackt, old *stackt)
+func runtime.malg(stacksize int32) *g
+func runtime.sigInstallGoHandler~(sig uint32) bool
+//func rt_sigaction(sig uintptr, new, old *sigactiont, size uintptr) int32
+func runtime.rt_sigaction~(sig uintptr, new *sigactiont, old *sigactiont, size uintptr) int32
 
 func runtime.checkdead()
 func runtime.schedule()
@@ -210,18 +223,25 @@ func runtime.mput(mp *m)
 func runtime.releasep() *p
 func runtime.pidleput(_p_ *p)
 func runtime.readgstatus(gp *g) uint32
+func runtime.mpreinit(mp *m)
+func runtime.publicationBarrier~()
+
 func runtime.execute(gp *g, inheritTime bool)
 func runtime.procyield(cycles uint32)
-//func runtime.ready(gp *g, traceskip int, next bool)
+func runtime.ready(gp *g, traceskip int, next bool)
+//func gopark(unlockf func(*g, unsafe.Pointer) bool, lock unsafe.Pointer, reason string, traceEv byte, traceskip int)
+func runtime.gopark(unlockf pfn, lock unsafe.Pointer, reason string, traceEv byte, traceskip int)
+func threadentry(v uintptr/p)
+func runtime.adjustframe(frame *stkframe, arg unsafe.Pointer) bool
 
 func runtime.findfunc(pc uintptr) funcInfo
+func runtime.findmoduledatap(pc uintptr/p) *moduledata
+//func runtime.step(p []byte, pc *uintptr, val *int32, first bool) (newp []byte, ok bool)
+func runtime.stackmapdata(stkmap *stackmap, n int32) bitvector
 
 // Slices
 //func makeslice(et *_type, len, cap int) slice
 func runtime.makeslice(et *_type, len int, cap int) slice
-
-// Network
-func runtime.netpollinited() bool
 
 func runtime\internal\atomic.Load(ptr *uint32) uint32
 func runtime\internal\atomic.Load64(ptr *uint64) uint64
@@ -232,15 +252,18 @@ func runtime.aeshash32(p unsafe.Pointer, h uintptr) uintptr/x
 func runtime.aeshash64(p unsafe.Pointer, h uintptr) uintptr/x
 
 // Strings
-func strings.IndexByte(s string, c byte) int
+func strings.IndexByte~(s string, c byte) int
 func runtime.findnull(s *byte) int
 func runtime.gostring(p *byte) string
 func runtime.gostringnocopy(str *byte) string
 
 // Bytes
-func IndexByte(s []byte, c byte) int
+func bytes.IndexByte~(s []byte, c byte) int
 
 // Linker
 func runtime.vdso_find_version(info *vdso_info, ver *version_key) int32
 func runtime.vdso_parse_symbols(info *vdso_info, version int32)
 func runtime.vdso_init_from_sysinfo_ehdr(info *vdso_info, hdr *elf64Ehdr)
+
+// Math
+func runtime.round2(x int32) int32
