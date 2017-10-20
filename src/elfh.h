@@ -7,6 +7,7 @@
 
 typedef struct symbol_mapping {
 	unsigned long addr;
+	int is_func;
 	char *name;
 } symbol_mapping_t;
 

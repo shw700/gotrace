@@ -38,6 +38,18 @@ typedef enum {
 	gstring
 } golang_data_type;
 
+typedef struct golang_interface {
+	void *addr;
+	void *bind_addr;
+	void *typ;
+	void *elem;
+	char *name;
+} golang_interface_t;
+
+golang_interface_t *all_ginterfaces = NULL;
+size_t ngolang_ifaces = 0;
+size_t n_unresolved_interfaces = 0;
+
 
 typedef struct saved_prolog {
 	void *addr;
@@ -459,7 +471,7 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 	DEBUG_PRINT(2, "Handling trace trap!\n");
 
 #define tgkill(tgid,tid,sig)	syscall(SYS_tgkill, tgid, tid, sig)
-	if (master_pid > 0) {
+	if (master_pid < 0) {
 		size_t j;
 
 		for (j = 0; j < sizeof(observed_pids)/sizeof(observed_pids[0]); j++) {
@@ -519,8 +531,6 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 
 	if (dont_reset)
 		return 0;
-
-//	printf("is return = %d\n", is_return);
 
 	if (!is_return) {
 		size_t ridx;
@@ -590,14 +600,31 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 
 	int wait_status = 0;
 
-	if (waitpid(pid, &wait_status, 0) < 0) {
-		perror_pid("waitpid", pid);
-		return -1;
-	}
+	while (1) {
 
-	if (!WIFSTOPPED(wait_status) || (WSTOPSIG(wait_status) != SIGTRAP)) {
-		PRINT_ERROR("%s", "Error: single step process returned in unexpected fashion.\n");
-		return -1;
+		if (waitpid(pid, &wait_status, 0) < 0) {
+			perror_pid("waitpid", pid);
+			return -1;
+		}
+
+		if (WIFSTOPPED(wait_status) && (WSTOPSIG(wait_status) == SIGUSR1)) {
+			PRINT_ERROR("Continuing on SIGUSR1 receipt (%d)\n", pid);
+
+			if (ptrace(PTRACE_CONT, pid, 0, 0) == -1) {
+				perror_pid("PTRACE(PTRACE_CONT)", pid);
+				return -1;
+			}
+
+			continue;
+		}
+
+		if (!WIFSTOPPED(wait_status) || (WSTOPSIG(wait_status) != SIGTRAP)) {
+			PRINT_ERROR("Error: single step process (%d) returned in unexpected fashion.\n", pid);
+			dump_wait_state(pid, wait_status, 1);
+			return -1;
+		}
+
+		break;
 	}
 
 	if (is_return) {
@@ -978,6 +1005,10 @@ set_all_intercepts(pid_t pid) {
 			continue;
 
 		for (size_t j = 0; j < symbol_store[i].msize; j++) {
+
+			if (!symbol_store[i].map[j].is_func)
+				continue;
+
 //			fprintf(stderr, "CANDIDATE: %s - %lx\n", symbol_store[i].map[j].name, symbol_store[i].map[j].addr);
 
 			if (is_intercept_excluded(symbol_store[i].map[j].name)) {
@@ -1512,6 +1543,153 @@ trace_program(const char *progname, char * const *args) {
 	return 0;
 }
 
+#define ITAB_PREFIX	"go.itab."
+void
+scan_interfaces(void) {
+	size_t i, ninterfaces = 0, ctr = 0;
+
+	for (i = 0; i < sizeof(symbol_store)/sizeof(symbol_store[0]); i++) {
+		size_t j;
+
+		if (!symbol_store[i].l)
+			continue;
+
+		for (j = 0; j < symbol_store[i].msize; j++) {
+
+			if (strncmp(symbol_store[i].map[j].name, ITAB_PREFIX, strlen(ITAB_PREFIX)))
+				continue;
+			else if (symbol_store[i].map[j].is_func)
+				continue;
+
+			ninterfaces++;
+		}
+
+	}
+
+	if (!(all_ginterfaces = malloc(sizeof(*all_ginterfaces) * ninterfaces))) {
+		PERROR("malloc");
+		return;
+	}
+
+	memset(all_ginterfaces, 0, sizeof(*all_ginterfaces) * ninterfaces);
+
+	for (i = 0; i < sizeof(symbol_store)/sizeof(symbol_store[0]); i++) {
+		size_t j;
+
+		if (!symbol_store[i].l)
+			continue;
+
+		for (j = 0; j < symbol_store[i].msize; j++) {
+			char *nptr;
+
+			if (strncmp(symbol_store[i].map[j].name, ITAB_PREFIX, strlen(ITAB_PREFIX)))
+				continue;
+			else if (symbol_store[i].map[j].is_func)
+				continue;
+
+			nptr = symbol_store[i].map[j].name + strlen(ITAB_PREFIX);
+			all_ginterfaces[ctr].addr = (void *)symbol_store[i].map[j].addr;
+			all_ginterfaces[ctr].name = nptr;
+
+//			fprintf(stderr, "IFACE: %s -> %p / %d\n", all_ginterfaces[ctr].name,
+//				(void *)symbol_store[i].map[j].addr, symbol_store[i].map[j].is_func);
+			ctr++;
+		}
+
+	}
+
+	ngolang_ifaces = ninterfaces;
+	n_unresolved_interfaces = ninterfaces;
+	return;
+}
+
+void
+resolve_all_interfaces(pid_t pid) {
+	size_t i;
+
+	for (i = 0; i < ngolang_ifaces; i++) {
+		unsigned long addr;
+		int err = 0;
+
+		if (all_ginterfaces[i].typ && all_ginterfaces[i].elem)
+			continue;
+
+		if (!all_ginterfaces[i].bind_addr) {
+			errno = 0;
+			addr = ptrace(PTRACE_PEEKDATA, pid, all_ginterfaces[i].addr+sizeof(void *), 0);
+
+			if (errno) {
+				perror_pid("PTRACE(PEEKDATA):int[1]", pid);
+				continue;
+			} else if (!addr)
+				continue;
+
+			all_ginterfaces[i].bind_addr = (void *)addr;
+		}
+
+		if (!all_ginterfaces[i].elem) {
+			errno = 0;
+			addr = ptrace(PTRACE_PEEKDATA, pid, all_ginterfaces[i].bind_addr, 0);
+
+			if (errno) {
+				perror_pid("PTRACE(PEEKDATA):int[2]", pid);
+				err = 1;
+			} else if (!addr)
+				err = 1;
+			else
+				all_ginterfaces[i].elem = (void *)addr;
+
+		}
+
+		if (!all_ginterfaces[i].typ) {
+			errno = 0;
+			addr = ptrace(PTRACE_PEEKDATA, pid, all_ginterfaces[i].bind_addr+sizeof(void *), 0);
+
+			if (errno) {
+				perror_pid("PTRACE(PEEKDATA):int[3]", pid);
+				err = 1;
+			} else if (!addr)
+				err = 1;
+			else
+				all_ginterfaces[i].typ = (void *)addr;
+
+		}
+
+		if (!err) {
+			n_unresolved_interfaces--;
+//			fprintf(stderr, "XXX: added interface %s - %p, %p\n",
+//				all_ginterfaces[i].name, all_ginterfaces[i].elem, all_ginterfaces[i].typ);
+
+		}
+
+	}
+
+	return;
+}
+
+const char *
+lookup_interface(pid_t pid, void *value, int is_typ) {
+	size_t i;
+
+	if (n_unresolved_interfaces) {
+//		fprintf(stderr, "XXX: %zu unresolved interfaces\n", n_unresolved_interfaces);
+		resolve_all_interfaces(pid);
+//		fprintf(stderr, "XXX: now: %zu unresolved interfaces\n", n_unresolved_interfaces);
+	}
+
+	for (i = 0; i < ngolang_ifaces; i++) {
+
+		if (is_typ && all_ginterfaces[i].typ == value)
+			return all_ginterfaces[i].name;
+		else if (!is_typ && all_ginterfaces[i].elem == value)
+			return all_ginterfaces[i].name;
+
+	}
+
+	return NULL;
+}
+
+
 #define PG	4096
 void
 balloon(void) {
@@ -1571,6 +1749,8 @@ main(int argc, char *argv[]) {
 		fprintf(stderr, "Error: could not read symbols from debug object\n");
 		exit(EXIT_FAILURE);
 	}
+
+	scan_interfaces();
 
 	snprintf(gotrace_socket_path, sizeof(gotrace_socket_path), "/tmp/gotrace.sock.%d", getpid());
 	atexit(cleanup);

@@ -222,6 +222,10 @@ int sym_exit(const char *symname, void *ptr, char *lib_from, char *lib_to, pid_t
 			tsd->indent_depth, collapsed,
 			symname, lib_to, lib_from,
 			argbuf, argdbuf, &tsd->nsuppressed);
+
+		if (tsd->indent_depth)
+			tsd->indent_depth--;
+
 		return 0;
 	}
 
@@ -277,9 +281,8 @@ int sym_exit(const char *symname, void *ptr, char *lib_from, char *lib_to, pid_t
 			symname, lib_to, lib_from,
 			argbuf, argdbuf, &tsd->nsuppressed);
 
-	if (tsd->indent_depth) {
+	if (tsd->indent_depth)
 		tsd->indent_depth--;
-	}
 
 	free_argbuf(argret, argbuf, argdbuf);
 	return 0;

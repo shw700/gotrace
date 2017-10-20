@@ -1616,6 +1616,30 @@ static int getstr_pod(struct lt_config_shared *cfg, pid_t pid, int dspname, stru
 	
 	*arglen = 0;
 
+	if (arg->real_type_name && (!strcmp(arg->real_type_name, "_type") &&
+			arg->pointer)) {
+		const char *dname1, *dname2, *tname;
+
+		dname1 = dspname ? arg->name : "";
+		dname2 = dspname ? LT_EQUAL : "";
+
+		if ((tname = lookup_interface(pid, pval, 1))) {
+			len = snprintf(argbuf, alen, "%s%s^%s", dname1, dname2, tname);
+			goto out;
+		}
+	} else if (arg->real_type_name && (!strcmp(arg->real_type_name, "_elem") &&
+			arg->pointer)) {
+		const char *dname1, *dname2, *tname;
+
+		dname1 = dspname ? arg->name : "";
+		dname2 = dspname ? LT_EQUAL : "";
+
+		if ((tname = lookup_interface(pid, pval, 0))) {
+			len = snprintf(argbuf, alen, "%s%s^%s", dname1, dname2, tname);
+			goto out;
+		}
+	}
+
 	if (arg->real_type_name && is_type_serialization_supported(arg->real_type_name)) {
 		const char *dname1, *dname2;
 		char *sres;

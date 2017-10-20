@@ -403,10 +403,10 @@ _get_all_symbols(symbol_mapping_t **pmap, size_t *msize, void *strtab, size_t st
 		if ((ELF_ST_TYPE(symtab->st_info) == STT_OBJECT) || (ELF_ST_TYPE(symtab->st_info) == STT_TLS))
 			add_address_mapping((void *)symtab->st_value+reloc_off, symtab->st_size, strtab+symtab->st_name);
 
-		if (ELF_ST_TYPE(symtab->st_info) != STT_FUNC) {
+/*		if (ELF_ST_TYPE(symtab->st_info) != STT_FUNC) {
 			symtab++;
 			continue;
-		}
+		}*/
 
 		symtab++, nsyms++;
 	}
@@ -442,17 +442,17 @@ _get_all_symbols(symbol_mapping_t **pmap, size_t *msize, void *strtab, size_t st
 			continue;
 		}
 
-		if (ELF_ST_TYPE(symtab->st_info) != STT_FUNC) {
+/*		if (ELF_ST_TYPE(symtab->st_info) != STT_FUNC) {
 			symtab++;
 			continue;
-		}
-
-		if (ELF_ST_TYPE(symtab->st_info) != STT_FUNC) {
-//			fprintf(stderr, "XXX: %s / %d\n", rstrtab+symtab->st_name, ELF_ST_TYPE(symtab->st_info));
-		}
+		}*/
 
 		rptr->addr = (unsigned long)reloc_off + symtab->st_value;
 		rptr->name = rstrtab + symtab->st_name;
+
+		if (ELF_ST_TYPE(symtab->st_info) == STT_FUNC)
+			rptr->is_func = 1;
+
 //printf("sym name: %s / %p [%lu]\n", rptr->name, rptr->addr, symtab->st_size);
 		symtab++, rptr++;
 	}
@@ -562,10 +562,6 @@ get_all_symbols(struct link_map *lm, symbol_mapping_t **pmap, size_t *msize, int
 		if (ELF_ST_TYPE(symtab->st_info) != STT_FUNC) {
 			symtab++;
 			continue;
-		}
-
-		if (ELF_ST_TYPE(symtab->st_info) != STT_FUNC) {
-//			fprintf(stderr, "XXX: %s / %d\n", rstrtab+symtab->st_name, ELF_ST_TYPE(symtab->st_info));
 		}
 
 		rptr->addr = (unsigned long)lm->l_addr + symtab->st_value;

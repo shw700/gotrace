@@ -37,12 +37,14 @@ func runtime.gcenable()
 func runtime.osinit()
 
 func runtime.convT2E(t *_type, elem unsafe.Pointer) (e face)
-func runtime.assertE2T2(typ *byte, iface uintptr) (ret any, ok bool)
-func runtime.assertI2T2(typ *byte, iface any) (ret any, ok bool)
-func runtime.efacethash/x(i1 uintptr) (ret uint32)
+//func runtime.convT2I(tab *_type, elem unsafe.Pointer) (i iface)
+func runtime.convT2I(tab *_type, elem *_elem) (i iface)
+func runtime.assertE2T2(typ *byte, iface uintptr/p) (ret any, ok bool)
+func runtime.assertI2T2(typ *_type, iface any) (ret any, ok bool)
+func runtime.efacethash(i1 uintptr/x) (ret uint32)
 
 //func memhash(p unsafe.Pointer, seed, s uintptr) uintptr
-func runtime.memhash/x(p uintptr, seed uintptr, s uintptr) uintptr
+func runtime.memhash(p uintptr, seed uintptr, s uintptr) uintptr/x
 func runtime.getitab(inter *interfacetype, typ *_type, canfail bool) *itab
 
 
@@ -54,7 +56,7 @@ func runtime.typedmemmove(t *rtype, dst unsafe.Pointer, src unsafe.Pointer)
 // malloc/dynamic memory
 
 func runtime.mallocinit()
-func runtime.mallocgc(size uintptr, typ *_typ, needzero bool) unsafe.Pointer
+func runtime.mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer
 func runtime.newobject(typ *_type) unsafe.Pointer
 func runtime.newarray(typ *_type, n int) unsafe.Pointer
 //func persistentalloc(size, align uintptr, sysStat *uint64) unsafe.Pointer {
@@ -69,6 +71,8 @@ func runtime.heapBitsSetType(x uintptr, size uintptr, dataSize uintptr, typ *_ty
 func progToPointerMask(prog *byte, size uintptr) bitvector
 //func runGCProg(prog, trailer, dst *byte, size int) uintptr
 func runtime.runGCProg(prog *byte, trailer *byte, dst *byte, size int) uintptr
+
+func runtime.computeDivMagic(c *class)
 
 
 func runtime.sysAlloc(uintptr *n) unsafe.Pointer
@@ -117,8 +121,8 @@ func runtime.asmcgocall(fn unsafe.Pointer, arg unsafe.Pointer) int32
 func runtime.entersyscallblock(dummy int32)
 func syscall.errnoErr(e Errno=errno) error
 
-func runtime.getcallerpc/p() uintptr
-func runtime.getcallersp/p(argp unsafe.Pointer) uintptr
+func runtime.getcallerpc() uintptr/p
+func runtime.getcallersp(argp unsafe.Pointer) uintptr/p
 
 func syscall.Write(fd int, p []byte) (n int, err error)
 
@@ -231,6 +235,12 @@ func runtime.aeshash64(p unsafe.Pointer, h uintptr) uintptr/x
 func strings.IndexByte(s string, c byte) int
 func runtime.findnull(s *byte) int
 func runtime.gostring(p *byte) string
+func runtime.gostringnocopy(str *byte) string
 
 // Bytes
 func IndexByte(s []byte, c byte) int
+
+// Linker
+func runtime.vdso_find_version(info *vdso_info, ver *version_key) int32
+func runtime.vdso_parse_symbols(info *vdso_info, version int32)
+func runtime.vdso_init_from_sysinfo_ehdr(info *vdso_info, hdr *elf64Ehdr)
