@@ -428,15 +428,14 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 	size_t i, ra;
 	int ret, is_return = 0;
 
-	if (WIFSTOPPED(status) && WSTOPSIG(status) == SIGUSR1) {
-//		fprintf(stderr, "SIGUSR1 OK\n");
+/*	if (WIFSTOPPED(status) && WSTOPSIG(status) == SIGUSR1) {
+		fprintf(stderr, "SIGUSR1 OK\n");
 		return 1;
-	}
+	}*/
 
 //	if ((status >> 8) == (SIGTRAP | (PTRACE_EVENT_CLONE << 8))) { }
 
 	if (!WIFSTOPPED(status) || (WSTOPSIG(status) != SIGTRAP)) {
-		dump_wait_state(pid, status, 1);
 
 		if (WIFSTOPPED(status) && (WSTOPSIG(status) == SIGSTOP)) {
 			if (is_pid_new(pid)) {
@@ -460,38 +459,15 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 					exit(EXIT_FAILURE);
 				} */
 
-				fprintf(stderr, "KEK2: %d\n", WSTOPSIG(status));
 				return 1;
 			}
 		}
 
+		dump_wait_state(pid, status, 1);
 		return 0;
 	}
 
 	DEBUG_PRINT(2, "Handling trace trap!\n");
-
-#define tgkill(tgid,tid,sig)	syscall(SYS_tgkill, tgid, tid, sig)
-	if (master_pid < 0) {
-		size_t j;
-
-		for (j = 0; j < sizeof(observed_pids)/sizeof(observed_pids[0]); j++) {
-			int kret;
-
-			if (!observed_pids[j])
-				continue;
-			else if (observed_pids[j] == pid)
-				continue;
-
-			if ((kret = tgkill(master_pid, observed_pids[j], SIGUSR1)) == -1) {
-				perror_pid("tgkill", observed_pids[j]);
-
-				if (errno == ESRCH)
-					monitor_pid(observed_pids[j], 1);
-			}
-
-		}
-
-	}
 
 	if (ptrace(PTRACE_GETREGS, pid, 0, &regs) < 0) {
 		perror_pid("ptrace(PTRACE_GETREGS)", pid);
@@ -531,6 +507,31 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 
 	if (dont_reset)
 		return 0;
+
+
+#define tgkill(tgid,tid,sig)	syscall(SYS_tgkill, tgid, tid, sig)
+	if (master_pid > 0) {
+		size_t j;
+
+		for (j = 0; j < sizeof(observed_pids)/sizeof(observed_pids[0]); j++) {
+			int kret;
+
+			if (!observed_pids[j])
+				continue;
+			else if (observed_pids[j] == pid)
+				continue;
+
+			if ((kret = tgkill(master_pid, observed_pids[j], SIGSTOP)) == -1) {
+				perror_pid("tgkill", observed_pids[j]);
+
+				if (errno == ESRCH)
+					monitor_pid(observed_pids[j], 1);
+			}
+
+		}
+
+	}
+
 
 	if (!is_return) {
 		size_t ridx;
@@ -607,15 +608,16 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 			return -1;
 		}
 
-		if (WIFSTOPPED(wait_status) && (WSTOPSIG(wait_status) == SIGUSR1)) {
-			PRINT_ERROR("Continuing on SIGUSR1 receipt (%d)\n", pid);
+		if (WIFSTOPPED(wait_status) && ((WSTOPSIG(wait_status) == SIGSTOP))) {
+//			PRINT_ERROR("Continuing on SIGSTOP receipt (%d)\n", pid);
+			break;
 
-			if (ptrace(PTRACE_CONT, pid, 0, 0) == -1) {
+/*			if (ptrace(PTRACE_CONT, pid, 0, 0) == -1) {
 				perror_pid("PTRACE(PTRACE_CONT)", pid);
 				return -1;
 			}
 
-			continue;
+			continue; */
 		}
 
 		if (!WIFSTOPPED(wait_status) || (WSTOPSIG(wait_status) != SIGTRAP)) {
@@ -1619,7 +1621,7 @@ resolve_all_interfaces(pid_t pid) {
 			addr = ptrace(PTRACE_PEEKDATA, pid, all_ginterfaces[i].addr+sizeof(void *), 0);
 
 			if (errno) {
-				perror_pid("PTRACE(PEEKDATA):int[1]", pid);
+//				perror_pid("PTRACE(PEEKDATA):int[1]", pid);
 				continue;
 			} else if (!addr)
 				continue;
@@ -1632,7 +1634,7 @@ resolve_all_interfaces(pid_t pid) {
 			addr = ptrace(PTRACE_PEEKDATA, pid, all_ginterfaces[i].bind_addr, 0);
 
 			if (errno) {
-				perror_pid("PTRACE(PEEKDATA):int[2]", pid);
+//				perror_pid("PTRACE(PEEKDATA):int[2]", pid);
 				err = 1;
 			} else if (!addr)
 				err = 1;
@@ -1646,7 +1648,7 @@ resolve_all_interfaces(pid_t pid) {
 			addr = ptrace(PTRACE_PEEKDATA, pid, all_ginterfaces[i].bind_addr+sizeof(void *), 0);
 
 			if (errno) {
-				perror_pid("PTRACE(PEEKDATA):int[3]", pid);
+//				perror_pid("PTRACE(PEEKDATA):int[3]", pid);
 				err = 1;
 			} else if (!addr)
 				err = 1;
