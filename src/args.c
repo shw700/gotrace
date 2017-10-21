@@ -1087,13 +1087,15 @@ int lt_args_add_sym(struct lt_config_shared *cfg, struct lt_arg *ret,
 	return 0;
 }
 
-static struct lt_arg* argdup(struct lt_config_shared *cfg, struct lt_arg *asrc)
+struct lt_arg* argdup(struct lt_config_shared *cfg, struct lt_arg *asrc, const char *name)
 {
 	struct lt_arg *arg, *a;
         struct lt_list_head *h;
 
-	PRINT_VERBOSE(cfg, 2, "got arg '%s %s', dtype %d\n",
-			asrc->type_name, asrc->name, asrc->dtype);
+	if (cfg) {
+		PRINT_VERBOSE(cfg, 2, "got arg '%s %s', dtype %d\n",
+				asrc->type_name, asrc->name, asrc->dtype);
+	}
 
 	XMALLOC_ASSIGN(arg, sizeof(*arg));
 	if (!arg) {
@@ -1102,6 +1104,12 @@ static struct lt_arg* argdup(struct lt_config_shared *cfg, struct lt_arg *asrc)
 	}
 
 	*arg = *asrc;
+
+	if (name) {
+		XSTRDUP_ASSIGN(arg->name, name);
+		if (!arg->name)
+			return NULL;
+	}
 
 	if (arg->dtype != LT_ARGS_DTYPE_STRUCT)
 		return arg;
@@ -1121,7 +1129,7 @@ static struct lt_arg* argdup(struct lt_config_shared *cfg, struct lt_arg *asrc)
 
 		/* XXX Not sure how safe is this one... 
 		   might need some attention in future :) */
-		if (NULL == (aa = argdup(cfg, a))) {
+		if (NULL == (aa = argdup(cfg, a, NULL))) {
 			XFREE(h);
 			XFREE(arg);
 			return NULL;
@@ -1166,7 +1174,7 @@ struct lt_arg* find_arg(struct lt_config_shared *cfg, const char *type,
 		if (!create)
 			return &argsdef[i];
 
-		arg = argdup(cfg, &adef);
+		arg = argdup(cfg, &adef, NULL);
 
 		PRINT_VERBOSE(cfg, 3, "found %d\n", arg->type_id);
 		return arg;
@@ -1802,6 +1810,12 @@ do {                                                                 \
 
 		strcat(argbuf, "\"");
 	} else {
+
+		if ((arg->pointer > 0) && (force_type_id != LT_ARGS_TYPEID_STRING) && (force_type_id != LT_ARGS_TYPEID_CHAR)) {
+			ARGS_SPRINTF("%p", void *);
+			goto out;
+		}
+
 		switch(force_type_id) {
 		case LT_ARGS_TYPEID_INT16:   ARGS_SPRINTF("%hd", short); break;
 		case LT_ARGS_TYPEID_UINT16:  ARGS_SPRINTF("%hu", uint16_t); break;

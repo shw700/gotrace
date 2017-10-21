@@ -115,6 +115,8 @@ struct lt_arg {
 	/* nested arguments list if present */
 	struct lt_list_head args_list;
 
+	struct lt_arg *multi_arg_next;
+
 	/* auxiliary interpretation parameters */
 	char *fmt;
 	char *bitmask_class;
@@ -169,6 +171,7 @@ struct lt_args_data {
 
 /* arguments */
 int lt_args_init(struct lt_config_shared *cfg);
+struct lt_arg* argdup(struct lt_config_shared *cfg, struct lt_arg *asrc, const char *name);
 struct lt_args_sym* lt_args_sym_get(struct lt_config_shared *cfg,
 					const char *sym);
 int lt_args_sym_entry(struct lt_config_shared *cfg, struct lt_symbol *sym,

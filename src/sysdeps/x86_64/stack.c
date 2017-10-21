@@ -549,17 +549,17 @@ static void *get_value(struct lt_config_shared *cfg, struct lt_arg *arg, pid_t t
 	if (next_off) {
 //		unsigned long oval=val;
 
-		if ((arg->type_id == LT_ARGS_TYPEID_INT32 || (arg->type_id == LT_ARGS_TYPEID_UINT32))) {
+		if ((arg->type_id == LT_ARGS_TYPEID_INT32 || (arg->type_id == LT_ARGS_TYPEID_UINT32)) && !arg->pointer) {
 			*next_off = offset + extra_off + sizeof(int32_t);
 //			val >>= 32;
 			val &= 0x00000000ffffffff;
 			vsize = 4;
-		} else if ((arg->type_id == LT_ARGS_TYPEID_INT16 || (arg->type_id == LT_ARGS_TYPEID_UINT16))) {
+		} else if ((arg->type_id == LT_ARGS_TYPEID_INT16 || (arg->type_id == LT_ARGS_TYPEID_UINT16)) && !arg->pointer) {
 			*next_off = offset + extra_off + sizeof(int16_t);
 //			val >>= 48;
 			val &= 0x000000000000ffff;
 			vsize = 2;
-		} else if ((arg->type_id == LT_ARGS_TYPEID_INT8 || (arg->type_id == LT_ARGS_TYPEID_UINT8))) {
+		} else if ((arg->type_id == LT_ARGS_TYPEID_INT8 || (arg->type_id == LT_ARGS_TYPEID_UINT8)) && !arg->pointer) {
 			*next_off = offset + extra_off + sizeof(int8_t);
 			val &= 0x00000000000000ff;
 			vsize = 1;

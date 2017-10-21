@@ -96,7 +96,7 @@ entry blank_space
 |
 entry struct_def
 |
-entry enum_def
+entry const_def
 |
 entry func_def
 |
@@ -161,7 +161,7 @@ STRUCT_DEF DEF ';'
 }
 
 /* enum definitions */
-enum_def:
+const_def:
 CONST NAME '(' CONST_DEF ')'
 {
 	switch(lt_args_add_enum(scfg, $2, 0, $4)) {
@@ -269,7 +269,28 @@ ARGS ',' DEF
 	struct lt_arg *def     = $3;
 	struct lt_list_head *h = $1;
 
+	if (def->multi_arg_next) {
+		struct lt_arg *first = def, *second = def->multi_arg_next, *last = def;
+
+		while (last->multi_arg_next)
+			last = last->multi_arg_next;
+
+		last->multi_arg_next = first;
+		first->multi_arg_next = NULL;
+		def = second;
+	}
+
 	lt_list_add_tail(&def->args_list, h);
+
+	if (def->multi_arg_next) {
+		struct lt_arg *argptr = def->multi_arg_next;
+
+		while (argptr) {
+			lt_list_add_tail(&argptr->args_list, h);
+			argptr = argptr->multi_arg_next;
+		}
+
+	}
 	$$ = h;
 }
 | DEF
@@ -277,8 +298,31 @@ ARGS ',' DEF
 	struct lt_list_head *h;
 	struct lt_arg *def = $1;
 
+	// Swap if necessary.
+	if (def->multi_arg_next) {
+		struct lt_arg *first = def, *second = def->multi_arg_next, *last = def;
+
+		while (last->multi_arg_next)
+			last = last->multi_arg_next;
+
+		last->multi_arg_next = first;
+		first->multi_arg_next = NULL;
+		def = second;
+	}
+
 	GET_LIST_HEAD(h);
 	lt_list_add_tail(&def->args_list, h);
+
+	if (def->multi_arg_next) {
+		struct lt_arg *argptr = def->multi_arg_next;
+
+		while (argptr) {
+			lt_list_add_tail(&argptr->args_list, h);
+			argptr = argptr->multi_arg_next;
+		}
+
+	}
+
 	$$ = h;
 }
 | NAME
@@ -329,6 +373,16 @@ ARGS ',' DEF
 }
 
 DEF:
+NAME ',' DEF {
+	struct lt_arg *dup_arg, *arg = $3;
+	struct lt_list_head *h;
+
+	dup_arg = argdup(NULL, arg, $1);
+	arg->multi_arg_next = dup_arg;
+
+	$$ = arg;
+}
+|
 NAME NAME ENUM_REF
 {
 	struct lt_arg *arg;
