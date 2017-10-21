@@ -62,6 +62,7 @@ func runtime.persistentalloc1(size, align uintptr, sysStat *uint64) unsafe.Point
 func runtime.nextSample() int32
 //func allocm(_p_ *p, fn func()) *m
 func runtime.allocm(_p_ *p, fn pfn) *m
+func runtime.(h *mheap) alloc_m(npage uintptr, sizeclass int32, large bool) *mspan
 
 func runtime.heapBits.initSpan(s *mspan)
 func runtime.recordspan(vh unsafe.Pointer, p unsafe.Pointer)
@@ -113,11 +114,12 @@ func runtime.reentersyscall(pc, sp uintptr/p)
 func syscall.Syscall(trap int64, a1 int64=SYSCALL_NO, a2 int64/p, a3 int64) (r1 int64, r2 int64, err int64)
 func runtime.exitsyscall(dummy int32)
 func runtime.exitsyscallfast() bool
+func runtime.asminit~()
 func runtime.asmcgocall(fn, arg unsafe.Pointer) int32
 func runtime.entersyscallblock(dummy int32)
 func syscall.errnoErr(e Errno=errno) error
 
-func runtime.getcallerpc() uintptr/p
+func runtime.getcallerpc~() uintptr/p
 func runtime.getcallersp~(argp unsafe.Pointer) uintptr/p
 
 func syscall.Write(fd int, p []byte) (n int, err error)
@@ -128,6 +130,7 @@ func runtime.usleep(usec uint32)
 func runtime.futexsleep(addr *uint32, val uint32, ns int64)
 func runtime.notetsleep(n *note, ns int64) bool
 func runtime.nanotime~() int64
+func runtime.unixnanotime() int64
 func runtime.timediv(v int64, div int32, rem *int32)
 func runtime.timerproc(tb *timersBucket)
 func runtime.notetsleep(n *note, ns int64) bool
@@ -180,8 +183,8 @@ func runtime.memmove~(to *any, frm *any, length uintptr)
 func runtime.lock(l *mutex)
 func runtime.unlock(l *mutex)
 func runtime.futex(addr unsafe.Pointer, op int32, val uint32, ts, addr2 unsafe.Pointer, val3 uint32) int32
-
-func runtime.gogo(buf *gobuf)
+func sync.(m *Mutex) Lock()
+func sync.(m *Mutex) Unlock()
 
 // Format
 func fmt.parsenum(s string, start, end int) (num int, isnum bool, newi int)
@@ -229,6 +232,9 @@ func runtime.handoffp(_p_ *p)
 func runtime.newm(fn pfn, _p_ *p)
 func runtime.acquirep(_p_ *p)
 func runtime.acquirep1(_p_ *p)
+func runtime.gosave(buf *gobuf)
+func runtime.gogo(buf *gobuf)
+func runtime.prefetchnta(addr uintptr/p)
 
 // Slices
 //func makeslice(et *_type, len, cap int) slice
@@ -262,3 +268,10 @@ func runtime.vdso_init_from_sysinfo_ehdr(info *vdso_info, hdr *elf64Ehdr)
 
 // Math
 func runtime.round2(x int32) int32
+
+// File
+func net.(f *file) getLineFromData() (s string, ok bool)
+func os.(f *File) read(b []byte) (n int, err error)
+func os.(f *File) Read(b []byte) (n int, err error)
+func os.(f *File) Close() error
+func os.NewFile(fd uintptr, name string) *File

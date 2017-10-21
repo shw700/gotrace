@@ -65,7 +65,7 @@ do { \
 %}
 
 
-%token NEWLINE NAME FILENAME FUNC STRUCT CONST IMPORT END POINTER SLICE
+%token NEWLINE NAME TYPE_PREFIX FILENAME FUNC STRUCT CONST IMPORT END POINTER SLICE
 
 %union
 {
@@ -77,6 +77,7 @@ do { \
 }
 
 %type <s>         NAME
+%type <s>         TYPE_PREFIX
 %type <s>         FUNC
 %type <s>         POINTER
 %type <s>         FILENAME
@@ -375,7 +376,6 @@ ARGS ',' DEF
 DEF:
 NAME ',' DEF {
 	struct lt_arg *dup_arg, *arg = $3;
-	struct lt_list_head *h;
 
 	dup_arg = argdup(NULL, arg, $1);
 	arg->multi_arg_next = dup_arg;
@@ -501,6 +501,42 @@ FUNC NAME
 	if (NULL == (arg = lt_args_getarg(scfg, "void", $2, 0, 1, NULL)))
 		ERROR("unknown argument type[2b] - %s\n", $2);
 
+	$$ = arg;
+}
+|
+FUNC TYPE_PREFIX NAME POINTER NAME ')' NAME
+{
+	struct lt_arg *arg;
+	char fnamebuf[256], *fname;
+
+	if (*($7) == '.')
+		($7)++;
+
+	snprintf(fnamebuf, sizeof(fnamebuf), "%s*%s).%s", $2, $5, $7);
+	fname = strdup(fnamebuf);
+
+	if (NULL == (arg = lt_args_getarg(scfg, "void", fname, 0, 1, NULL)))
+		ERROR("unknown argument type[2b] - %s\n", fname);
+
+	free($2);
+	$$ = arg;
+}
+|
+FUNC TYPE_PREFIX POINTER NAME ')' NAME
+{
+	struct lt_arg *arg;
+	char fnamebuf[256], *fname;
+
+	if (*($6) == '.')
+		($6)++;
+
+	snprintf(fnamebuf, sizeof(fnamebuf), "%s*%s).%s", $2, $4, $6);
+	fname = strdup(fnamebuf);
+
+	if (NULL == (arg = lt_args_getarg(scfg, "void", fname, 0, 1, NULL)))
+		ERROR("unknown argument type[2b] - %s\n", fname);
+
+	free($2);
 	$$ = arg;
 }
 
