@@ -5,7 +5,7 @@
 
 
 golang_type_serializer_t golang_serializer_table[] = {
-	STBLENT("net.TCPConn", gotrace_print_net__TCPConn),
+//	STBLENT("net.TCPConn", gotrace_print_net__TCPConn),
 	STBLENT(NULL, NULL)
 };
 

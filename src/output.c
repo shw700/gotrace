@@ -39,7 +39,6 @@ typedef struct thread_buffer {
 } thread_buffer_t;
 
 thread_buffer_t *thread_buffers = NULL;
-pthread_mutex_t threadbuf_lock = PTHREAD_MUTEX_INITIALIZER;
 
 #define PRINT_DETAILS(tobuf,buf) \
 do { \
@@ -147,7 +146,6 @@ buffer_output_data(pid_t tid, const char *output, int nest_level, int do_prefix)
 	if (!output || !*output)
 		return;
 
-	pthread_mutex_lock(&threadbuf_lock);
 	tb = thread_buffers;
 
 	while (tb && (tb->tid != tid))
@@ -170,7 +168,6 @@ buffer_output_data(pid_t tid, const char *output, int nest_level, int do_prefix)
 
 	if (!outbuf) {
 		PRINT_ERROR("%s", "Error: unable to allocate memory for output buffer");
-		pthread_mutex_unlock(&threadbuf_lock);
 		return;
 	}
 
@@ -200,7 +197,6 @@ buffer_output_data(pid_t tid, const char *output, int nest_level, int do_prefix)
 		XMALLOC_ASSIGN(tb, sizeof(*tb));
 		if (!tb) {
 			PRINT_ERROR("%s", "Error: unable to allocate memory for output buffer");
-			pthread_mutex_unlock(&threadbuf_lock);
 			return;
 		}
 
@@ -212,7 +208,6 @@ buffer_output_data(pid_t tid, const char *output, int nest_level, int do_prefix)
 
 	tb->buf = outbuf;
 	tb->last_nested = nest_level;
-	pthread_mutex_unlock(&threadbuf_lock);
 	return;
 }
 
@@ -222,7 +217,6 @@ pop_output_data(pid_t tid)
 	thread_buffer_t *tb;
 	char *result;
 
-	pthread_mutex_lock(&threadbuf_lock);
 	tb = thread_buffers;
 
 	while (tb && (tb->tid != tid))
@@ -242,7 +236,6 @@ pop_output_data(pid_t tid)
 
 	}
 
-	pthread_mutex_unlock(&threadbuf_lock);
 	return result;
 }
 

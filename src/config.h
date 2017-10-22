@@ -217,6 +217,10 @@ struct lt_symbol {
 	int collapsed;
 };
 
+
+void *xmalloc(size_t size);
+
+
 /* audit */
 int audit_init(struct lt_config_audit *cfg, int argc, char **argv, char **env);
 int sym_entry(const char *symname, void *ptr, char *lib_from, char *lib_to,
@@ -414,6 +418,8 @@ typedef struct __attribute__((packed)) gomod_data_hdr {
 
 #define GOMOD_LIB_NAME		"libgomod.so."CONFIG_VERSION
 #define GOMOD_INIT_FUNC		"_gomod_init"
+
+#define MAX_STRING_ALLOC_SIZE	8192
 
 
 #endif // !CONFIG_H

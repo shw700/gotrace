@@ -1606,7 +1606,8 @@ static int getstr_pod(struct lt_config_shared *cfg, pid_t pid, int dspname, stru
 			}
 
 			ms = massage_string((unsigned char *)s, psize);
-		}
+		} else
+			PRINT_ERROR("Error allocating slice of advertised size %zu bytes\n", psize);
 
 		if (!ms)
 			len = snprintf(argbuf, alen, "%s%s[%zu]{[..decoding error..]}", d1, d2, psize);

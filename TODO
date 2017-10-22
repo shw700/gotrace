@@ -10,4 +10,3 @@ problematic function decoding:
 Major updates needed:
 	1. Get cgo calling working again
 	2. Function hooking should use allocated jmpbufs instead of replace-and-single-step
-		should solve epollwait() restarting syscall storm

@@ -68,6 +68,10 @@ size_t saved_prolog_nentries = 1024;
 size_t saved_prolog_entries = 0;
 saved_prolog_t *saved_prologs = NULL;
 
+size_t saved_1t_prolog_nentries = 1024;
+size_t saved_1t_prolog_entries = 0;
+saved_prolog_t *saved_1t_prologs = NULL;
+
 size_t saved_ret_prolog_nentries = 64;
 size_t saved_ret_prolog_entries = 0;
 saved_prolog_t *saved_ret_prologs = NULL;
@@ -85,32 +89,18 @@ char gotrace_socket_path[128];
 
 char *excluded_intercepts[] = {
 //	"runtime.(*mcache).refill",
-//	"main.GetConnection",
-//	"main.TouchConnection"
-/*	"runtime.atomicstorep",
-	"runtime.cgocall",
-	"runtime.endcgo",
-	"runtime.exitsyscall",
-	"runtime.exitsyscallfast",
-	"runtime.lock",
-	"runtime.futexwakeup"*/
-/*	"threadentry",
-	"setg_gcc",
-	"runtime.mstart",
-	"runtime.mstart1",
-	"runtime.gosave",
-	"runtime.asminit",
-	"runtime.minit",
-	"runtime.sigaltstack",
-	"runtime.signalstack",
-	"runtime.gettid",
-	"runtime.rtsigprocmask"*/
+//	"runtime.cgocall",
+	"runtime.rawstringtmp",
+	"runtime.slicebytetostring",
+	"net.absDomainName",
+	"net.appendHex"
 };
 
 pid_t master_pid = -1;
 
 
 #define FLAG_TRAP_INTERRUPTED	0x1
+#define FLAG_TRAP_SYSCALL	0x2
 
 typedef struct process_state {
 	pid_t pid;
@@ -132,18 +122,33 @@ void *gotrace_socket_loop(void *param);
 
 int set_all_intercepts(pid_t pid);
 int set_intercept(pid_t pid, void *addr);
+int set_one_time_intercept(pid_t pid, void *addr);
 int set_ret_intercept(pid_t pid, const char *fname, void *addr, size_t *pidx);
 int is_intercept_excluded(const char *fname);
-int set_pid_flags(pid_t pid, int flags);
+int set_pid_flags(pid_t pid, int flags, int do_mask);
 
 int save_remote_intercept(pid_t pid, const char *fname, void *addr, int is_entry);
 
+int is_thread_in_syscall(pid_t pid);
 void monitor_pid(pid_t pid, int do_remove);
 int is_pid_monitored(pid_t pid, int *pflags);
 
 void cleanup(void);
 void handle_int(int signo);
 
+
+void *
+xmalloc(size_t size)
+{
+	void *result;
+
+	if (!(result = malloc(size))) {
+		PRINT_ERROR("malloc(%zu): %s\n", size, strerror(errno));
+		exit(EXIT_FAILURE);
+	}
+
+	return result;
+}
 
 void
 monitor_pid(pid_t pid, int do_remove) {
@@ -193,13 +198,18 @@ is_pid_monitored(pid_t pid, int *pflags) {
 }
 
 int
-set_pid_flags(pid_t pid, int flags) {
+set_pid_flags(pid_t pid, int flags, int do_mask) {
 	size_t i;
 
 	for (i = 0; i < sizeof(observed_pids)/sizeof(observed_pids[0]); i++) {
 
 		if (observed_pids[i].pid == pid) {
-			observed_pids[i].flags = flags;
+
+			if (do_mask)
+				observed_pids[i].flags |= flags;
+			else
+				observed_pids[i].flags = flags;
+
 			return 1;
 		}
 
@@ -498,6 +508,8 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 					exit(EXIT_FAILURE);
 				}
 
+				is_thread_in_syscall(pid);
+
 				monitor_pid(pid, 0);
 
 /*				if (set_all_intercepts(pid) < 0) {
@@ -530,6 +542,36 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 	// Hmm
 	hot_pc = (void *)(regs.rip - 1);
 	hot_sp = (void *)(regs.rsp + sizeof(void *));
+
+	// See if there's any one time intercepts
+	for (i = 0; i < saved_1t_prolog_entries; i++) {
+		if (saved_1t_prologs[i].addr == hot_pc) {
+			unsigned long rword;
+
+//			PRINT_ERROR("%s", "XXX: hit one time intercept!!!\n");
+			rword = saved_1t_prologs[i].saved_prolog;
+
+			if (ptrace(PTRACE_POKETEXT, pid, hot_pc, rword) < 0) {
+				perror_pid("ptrace(PTRACE_POKETEXT)", pid);
+				return -1;
+			}
+
+			regs.rip = (long)hot_pc;
+
+			if (ptrace(PTRACE_SETREGS, pid, 0, &regs) < 0) {
+				perror_pid("ptrace(PTRACE_SETREGS)", pid);
+				return -1;
+			}
+
+//			PRINT_ERROR("%s", "XXX: one time intercept restored OK\n");
+			memset(&saved_1t_prologs[i], 0, sizeof(saved_1t_prologs[i]));
+
+			if (!set_pid_flags(pid, 0, 1))
+				PRINT_ERROR("Error clearing syscall status from PID %d\n", pid);
+
+			return 1;
+		}
+	}
 
 	// Check for remote intercept first.
 	if (!check_remote_intercept(pid, hot_pc, &regs)) {
@@ -574,6 +616,8 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 			if (!observed_pids[j].pid)
 				continue;
 			else if (observed_pids[j].pid == pid)
+				continue;
+			else if (observed_pids[j].flags & FLAG_TRAP_SYSCALL)
 				continue;
 
 			if ((kret = tgkill(master_pid, observed_pids[j].pid, SIGSTOP)) == -1) {
@@ -671,7 +715,7 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 
 		if (WIFSTOPPED(wait_status) && ((WSTOPSIG(wait_status) == SIGSTOP))) {
 
-			if (!set_pid_flags(pid, pflags | FLAG_TRAP_INTERRUPTED))
+			if (!set_pid_flags(pid, pflags | FLAG_TRAP_INTERRUPTED, 0))
 				PRINT_ERROR("%s", "Warning: unable to set traced process flags. Weirdness may ensue...\n");
 
 			break;
@@ -684,7 +728,7 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 			continue; */
 		} else {
 
-			if (!set_pid_flags(pid, pflags & ~(FLAG_TRAP_INTERRUPTED)))
+			if (!set_pid_flags(pid, pflags & ~(FLAG_TRAP_INTERRUPTED), 0))
 				PRINT_ERROR("%s", "Warning: unable to set traced process flags. Weirdness may ensue...\n");
 
 		}
@@ -787,7 +831,7 @@ dump_wait_state(pid_t pid, int status, int force) {
 		siginfo_t si;
 
 		// PTRACE_PEEKSIGINFO
-		if (ptrace(pid, PTRACE_GETSIGINFO, NULL, &si) < 0) {
+		if (ptrace(PTRACE_GETSIGINFO, pid, NULL, &si) < 0) {
 			perror_pid("ptrace(PTRACE_GETSIGINFO)", pid);
 		} else {
 			DEBUG_PRINT(dbg_level, "si_code=%d, si_pid=%d, si_uid=%d, si_status=%d, si_addr=%p, "
@@ -893,6 +937,49 @@ dump_intercepts(void) {
 		fprintf(stderr, "%.3zu: %p\n", i+1, saved_prologs[i].addr);
 
 	return;
+}
+
+int
+set_one_time_intercept(pid_t pid, void *addr) {
+	long saved_prolog = 0, mod_prolog;
+	unsigned char *tptr;
+	size_t i = 0;
+
+	while ((i < saved_1t_prolog_entries) && (saved_1t_prologs[i].addr != NULL))
+		i++;
+
+	if ((i == saved_1t_prolog_entries) && (i == saved_1t_prolog_nentries)) {
+		saved_prolog_t *new_prologs;
+
+		if (!(new_prologs = realloc(saved_1t_prologs, (saved_1t_prolog_nentries * 2 * sizeof(saved_prolog_t))))) {
+			perror_pid("realloc", pid);
+			return -1;
+		}
+
+		saved_1t_prolog_nentries *= 2;
+		saved_1t_prologs = new_prologs;
+	}
+
+	errno = 0;
+	saved_prolog = ptrace(PTRACE_PEEKTEXT, pid, addr, 0);
+	if (errno != 0) {
+		perror_pid("ptrace(PTRACE_PEEKTEXT)", pid);
+		return -1;
+	}
+
+	mod_prolog = saved_prolog;
+	tptr = (unsigned char *)&mod_prolog;
+	*tptr = 0xcc;
+
+	if (ptrace(PTRACE_POKETEXT, pid, addr, mod_prolog) < 0) {
+		perror_pid("ptrace(PTRACE_POKETEXT)", pid);
+		return -1;
+	}
+
+	saved_1t_prologs[i].addr = addr;
+	saved_1t_prologs[i].saved_prolog = saved_prolog;
+	saved_1t_prolog_entries++;
+	return 0;
 }
 
 int
@@ -1023,21 +1110,28 @@ set_ret_intercept(pid_t pid, const char *fname, void *addr, size_t *pidx) {
 int
 trace_init(void) {
 	if (!(saved_prologs = malloc(saved_prolog_nentries * sizeof(*saved_prologs)))) {
-		perror_pid("malloc", 0);
+		PERROR("pid");
 		return -1;
 	}
 
 	memset(saved_prologs, 0, saved_prolog_nentries * sizeof(*saved_prologs));
 
-	if (!(saved_ret_prologs = malloc(saved_ret_prolog_nentries * sizeof(*saved_prologs)))) {
-		perror_pid("malloc", 0);
+	if (!(saved_ret_prologs = malloc(saved_ret_prolog_nentries * sizeof(*saved_ret_prologs)))) {
+		PERROR("pid");
 		return -1;
 	}
 
-	memset(saved_ret_prologs, 0, saved_ret_prolog_nentries * sizeof(*saved_prologs));
+	memset(saved_ret_prologs, 0, saved_ret_prolog_nentries * sizeof(*saved_ret_prologs));
+
+	if (!(saved_1t_prologs = malloc(saved_1t_prolog_nentries * sizeof(*saved_1t_prologs)))) {
+		PERROR("pid");
+		return -1;
+	}
+
+	memset(saved_1t_prologs, 0, saved_1t_prolog_nentries * sizeof(*saved_1t_prologs));
 
 	if (!(remote_intercepts = malloc(remote_intercept_nentries * sizeof(*remote_intercepts)))) {
-		perror_pid("malloc", 0);
+		PERROR("pid");
 		return -1;
 	}
 
@@ -1107,7 +1201,7 @@ read_bytes_remote(pid_t pid, char *addr, size_t slen) {
 	size_t nread = 0;
 
 	if (slen) {
-		if (!(result = malloc(slen+1))) {
+		if (!(result = xmalloc(slen+1))) {
 			perror_pid("malloc", pid);
 			return NULL;
 		}
@@ -1245,6 +1339,49 @@ check_child_execute(pid_t pid) {
 		return 0;
 
 	return 1;
+}
+
+int
+is_thread_in_syscall(pid_t pid) {
+	struct user_regs_struct regs;
+	unsigned long word;
+	unsigned char *iptr = (unsigned char *)&word;
+
+	if (ptrace(PTRACE_GETREGS, pid, 0, &regs) < 0) {
+		perror_pid("ptrace(PTRACE_GETREGS)", pid);
+		return -1;
+	}
+
+	errno = 0;
+	word = ptrace(PTRACE_PEEKTEXT, pid, regs.rip-2, 0);
+	if (errno != 0) {
+		perror_pid("ptrace(PTRACE_PEEKTEXT)", pid);
+		return -1;
+	}
+
+	// 0x0f05 = syscall instruction
+	if ((iptr[0] == 0x0f) && (iptr[1] == 0x05)) {
+		siginfo_t si;
+
+		if (ptrace(PTRACE_GETSIGINFO, pid, NULL, &si) < 0) {
+			perror_pid("ptrace(PTRACE_GETSIGINFO)", pid);
+		} else {
+//			fprintf(stderr, "XXX: errno = %d, code = %x, si_addr = %p\n", si.si_errno, si.si_code, si.si_addr);
+//			fprintf(stderr, "XXX: call addr = %p, syscall = %d\n", si.si_call_addr, si.si_syscall);
+
+			if (si.si_code == SI_TKILL) {
+//				fprintf(stderr, "XXX: (%p) %lx / %x / %x\n", (void *)regs.rip-2, word, iptr[0], iptr[1]);
+
+				if (set_one_time_intercept(pid, (void *)regs.rip) < 0)
+					PRINT_ERROR("Error setting one time intercept for executing syscall in %d\n", pid);
+				else if (!set_pid_flags(pid, FLAG_TRAP_SYSCALL, 1))
+					PRINT_ERROR("Error marking process %d safe from syscall restarts. This might get stormy...\n", pid);
+			}
+		}
+
+	}
+
+	return 0;
 }
 
 void

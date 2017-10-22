@@ -428,7 +428,7 @@ read_string_remote(pid_t pid, char *addr, size_t slen) {
 
 	if (slen) {
 		if (!(result = malloc(slen+1))) {
-			perror("malloc");
+			PRINT_ERROR("malloc(%zu): %s\n", slen+1, strerror(errno));
 			return NULL;
 		}
 
@@ -532,8 +532,15 @@ static void *get_value(struct lt_config_shared *cfg, struct lt_arg *arg, pid_t t
 			return NULL;
 		}
 
-		if (!(str = read_string_remote(target, (void *)val, slen)))
+		if (slen > MAX_STRING_ALLOC_SIZE) {
+			// XXX: Do something.
+		}
+
+		if (!(str = read_string_remote(target, (void *)val, slen))) {
+			PRINT_ERROR("Error reading string (%s) of advertised size %zu bytes\n",
+				arg->name, slen);
 			return NULL;
+		}
 
 		if (next_off)
 			*next_off = offset + extra_off + (sizeof(void *) * 2);

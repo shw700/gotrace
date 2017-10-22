@@ -10,6 +10,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/ptrace.h>
+#include <sys/shm.h>
 
 #include "config.h"
 
@@ -936,6 +937,8 @@ typedef struct vmap_region {
 	int prot;
 	char *objname;
 	void *new_base;
+	key_t shmk;
+	int shmid;
 } vmap_region_t;
 
 #define MAX_VMA 16
@@ -1220,8 +1223,12 @@ parse_process_maps(pid_t pid, vmap_region_t *vmas, size_t nvmas) {
 		vind++;
 
 		if (vind >= (nvmas - 1)) {
+			char execbuf[32];
+
 			PRINT_ERROR("%s", "Unexpected high number of mapped virtual memory areas; exiting scan.\n");
 			fclose(f);
+			sprintf(execbuf, "cat /proc/%d/maps", pid);
+			system(execbuf);
 			return 1;
 		}
 
@@ -1287,6 +1294,18 @@ replicate_process_remotely(pid_t pid) {
 		v = get_local_vma(vmas[i].start, vmas[i].end-vmas[i].start, vmas[i].prot, NULL);
 		vmas[i].new_base = v;
 		PRINT_ERROR("v = %p\n", v);
+
+/*		vmas[i].shmk = 31337 + i;
+
+		if ((vmas[i].shmid = shmget(vmas[i].shmk, vmas[i].end-vmas[i].start, IPC_CREAT | 0666)) < 0) {
+			PERROR("shmget");
+			exit(EXIT_FAILURE);
+		}
+
+		if (shmctl(vmas[i].shmid, IPC_RMID, NULL) == -1) {
+			PERROR("shmctl");
+			exit(EXIT_FAILURE);
+		}*/
 
 		i++;
 	}

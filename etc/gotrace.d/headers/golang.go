@@ -46,10 +46,9 @@ func runtime.efacethash(i1 uintptr/x) (ret uint32)
 func runtime.memhash(p unsafe.Pointer, seed, s uintptr) uintptr/x
 func runtime.getitab(inter *interfacetype, typ *_type, canfail bool) *itab
 
+func runtime.memeq(a, b unsafe.Pointer, size uintptr) bool
+func runtime.memclr(ptr unsafe.Pointer, n uintptr)
 
-// value
-
-func runtime.typedmemmove(t *rtype, dst, src unsafe.Pointer)
 
 // malloc/dynamic memory
 
@@ -82,7 +81,7 @@ func runtime.setsig(i uint32, fn uintptr/p)
 func runtime.gogetenv(key string) string
 func runtime.GOROOT() string
 
-func runtime.strequal(unsafe.Pointer p, unsafe.Pointer q) int
+func runtime.strequal(unsafe.Pointer p, unsafe.Pointer q) bool
 
 func runtime.atomicstorep(ptr unsafe.Pointer, new unsafe.Pointer)
 
@@ -178,7 +177,8 @@ func net.xtoi~(s string) (n int, i int, ok bool)
 func time.now() (sec int64, nsec int32, mono int64)
 
 func runtime/internal/atomic.Load(ptr *uint32) uint32
-func runtime.memmove~(to *any, frm *any, length uintptr)
+//func runtime.memmove~(to *any, frm *any, length uintptr)
+func runtime.typedmemmove(t *rtype, dst, src unsafe.Pointer)
 
 func runtime.lock(l *mutex)
 func runtime.unlock(l *mutex)
@@ -244,6 +244,8 @@ func runtime\internal\atomic.Load(ptr *uint32) uint32
 func runtime\internal\atomic.Load64(ptr *uint64) uint64
 func runtime\internal\atomic.Xchg(ptr *uint32, new uint32) uint32
 
+func runtime.mapassign1(t *maptype, h *hmap, key unsafe.Pointer, val unsafe.Pointer)
+
 func runtime.aeshashstr(p unsafe.Pointer, h uintptr) uintptr/x
 func runtime.aeshash32(p unsafe.Pointer, h uintptr) uintptr/x
 func runtime.aeshash64(p unsafe.Pointer, h uintptr) uintptr/x
@@ -254,7 +256,7 @@ func runtime.findnull(s *byte) int
 func runtime.gostring(p *byte) string
 func runtime.gostringnocopy(str *byte) string
 //func runtime.rawstring(size int) (s string, b []byte)
-func runtime.rawstringtmp(buf *tmpBuf, l int) (s string, b []byte)
+//func runtime.rawstringtmp(buf *tmpBuf, l int) (s string, b []byte)
 func runtime.slicebytetostring(buf *tmpBuf, b []byte) (str string)
 func runtime.concatstrings(buf *tmpBuf, a []string) string
 
@@ -270,6 +272,7 @@ func runtime.vdso_init_from_sysinfo_ehdr(info *vdso_info, hdr *elf64Ehdr)
 func runtime.round2(x int32) int32
 
 // File
+func net.(f *file) readLine() (s string, ok bool)
 func net.(f *file) getLineFromData() (s string, ok bool)
 func os.(f *File) read(b []byte) (n int, err error)
 func os.(f *File) Read(b []byte) (n int, err error)
