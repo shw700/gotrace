@@ -33,8 +33,10 @@ memcmp_remote(pid_t pid, void *buf, size_t size, unsigned long watch_val) {
 	size_t pctr;
 	const unsigned char *p1, *p2;
 
-	if (!(rdata = read_bytes_remote(pid, buf, size)))
+	if (!(rdata = read_bytes_remote(pid, buf, size))) {
+		PRINT_ERROR("Error reading remote bytes at %p for comparison\n", buf);
 		return -1;
+	}
 
 	p1 = buf;
 	p2 = rdata;
@@ -409,6 +411,20 @@ call_remote_mprotect(pid_t pid, void *addr, size_t len, int prot) {
 	return ret;
 }
 
+unsigned long
+call_remote_shmat(pid_t pid, int shmid, const void *shmaddr, int shmflg) {
+	signed long ret;
+
+	ret = call_remote_syscall(pid, SYS_shmat, shmid, (unsigned long)shmaddr, shmflg, 0, 0, 0);
+
+	if (ret < 0) {
+		errno = -(ret);
+		return -1;
+	}
+
+	return ret;
+}
+
 void
 school_bus(int signo) {
 	PRINT_ERROR("Last copy range before signal delivery: %p <-> %p\n",
@@ -469,6 +485,65 @@ get_remote_vma(pid_t pid, unsigned long base, size_t size, int prot, void *fixed
 }
 
 void *
+get_remote_vma_shm(pid_t pid, int shmid, unsigned long base, size_t size, int prot, void *fixed) {
+	void *shma, *mbase = NULL;
+	int shmflag = 0;
+
+	if (!(prot & PROT_READ))
+		shmflag = SHM_RDONLY;
+
+//	if (prot & PROT_EXEC)
+//		shmflag = SHM_EXEC;
+
+	if (fixed)
+		mbase = fixed;
+
+	if ((shma = (void *)call_remote_shmat(pid, shmid, mbase, shmflag)) == (void *)-1) {
+		char errbuf[32];
+
+		snprintf(errbuf, sizeof(errbuf), "shmat(%d) / %x", shmid, prot);
+		perror_pid(errbuf, pid);
+		return NULL;
+	}
+
+	if (prot & PROT_EXEC) {
+
+		if (call_remote_mprotect(pid, mbase, size, prot) == -1) {
+			perror_pid("mprotect", pid);
+			return NULL;
+		}
+	}
+
+	if (!(prot & PROT_READ)) {
+		if (mprotect((void *)base, size, prot|PROT_READ) == -1) {
+			PERROR("mprotect");
+			return NULL;
+		}
+	}
+
+	return shma;
+}
+
+void
+jmp_memcpy(void *dest, const void *src, size_t n) {
+	int failed = 0;
+
+	if (sigsetjmp(jb, 1)) {
+		PRINT_ERROR("%s", "Error detected in sigsetjmp\n");
+		failed = 1;
+	}
+
+	if (!failed) {
+		last_copy_start = (void *)src;
+		last_copy_end = (void *)src + n;
+		memcpy(dest, src, n);
+	} else
+		PRINT_ERROR("%s", "Recovering from failure.\n");
+
+	return;
+}
+
+void *
 get_local_vma(unsigned long base, size_t size, int prot, void *fixed) {
 	void *vma, *mbase = NULL;
 	int failed = 0;
@@ -510,13 +585,13 @@ get_local_vma(unsigned long base, size_t size, int prot, void *fixed) {
 	} else
 		PRINT_ERROR("%s", "Recovering from failure.\n");
 
-	if (!(prot & PROT_WRITE)) {
+/*	if (!(prot & PROT_WRITE)) {
 		if (mprotect(vma, size, prot) == -1) {
 			PERROR("mprotect");
 			return NULL;
 		}
 
-	}
+	}*/
 
 //	fprintf(stderr, "GOT IT (%p)\n", vma);
 	return vma;
@@ -1237,13 +1312,13 @@ parse_process_maps(pid_t pid, vmap_region_t *vmas, size_t nvmas) {
 	return 0;
 }
 
-#define MAX_REPLICATE_VMA 128
+#define MAX_REPLICATE_VMA	96
 
 int
-replicate_process_remotely(pid_t pid) {
+replicate_process_remotely(pid_t pid, int **shmids) {
 	char exename[PATH_MAX+1], exelookup[64];
 	vmap_region_t vmas[MAX_REPLICATE_VMA+1];
-	size_t i = 0;
+	size_t i = 0, j;
 
 	memset(exename, 0, sizeof(exename));
 	snprintf(exelookup, sizeof(exelookup), "/proc/self/exe");
@@ -1261,7 +1336,7 @@ replicate_process_remotely(pid_t pid) {
 	signal(SIGBUS, school_bus);
 
 	while (vmas[i].end != 0) {
-		void *v;
+		void *pattach;
 
 		if (vmas[i].objname) {
 
@@ -1291,26 +1366,55 @@ replicate_process_remotely(pid_t pid) {
 				PRINT_ERROR("Warning: peek failed at %p\n", (void *)vmas[i].end);
 		}
 
-		v = get_local_vma(vmas[i].start, vmas[i].end-vmas[i].start, vmas[i].prot, NULL);
-		vmas[i].new_base = v;
-		PRINT_ERROR("v = %p\n", v);
+		// No longer necessary with the use of shared memory.
+//		v = get_local_vma(vmas[i].start, vmas[i].end-vmas[i].start, vmas[i].prot, NULL);
+//		vmas[i].new_base = v;
+//		PRINT_ERROR("v = %p\n", v);
+		vmas[i].new_base = (void *)vmas[i].start;
 
-/*		vmas[i].shmk = 31337 + i;
+		vmas[i].shmk = (getpid() * 100) + i;
 
 		if ((vmas[i].shmid = shmget(vmas[i].shmk, vmas[i].end-vmas[i].start, IPC_CREAT | 0666)) < 0) {
 			PERROR("shmget");
-			exit(EXIT_FAILURE);
+			return -1;
 		}
 
-		if (shmctl(vmas[i].shmid, IPC_RMID, NULL) == -1) {
-			PERROR("shmctl");
-			exit(EXIT_FAILURE);
-		}*/
+		if ((!(vmas[i].prot & PROT_READ)) &&
+				(mprotect((void *)vmas[i].start, vmas[i].end-vmas[i].start, vmas[i].prot|PROT_READ)))
+			PERROR("mprotect");
+
+		pattach = shmat(vmas[i].shmid, NULL, 0);
+		if (pattach == (void *)-1) {
+			PERROR("shmat");
+			return -1;
+		}
+
+//		memcpy(pattach, vmas[i].new_base, vmas[i].end-vmas[i].start);
+		jmp_memcpy(pattach, (void *)vmas[i].start, vmas[i].end-vmas[i].start);
+
+		if (shmdt(pattach) == -1) {
+			PERROR("shmdt");
+			return -1;
+		}
+
+		if ((!(vmas[i].prot & PROT_READ)) &&
+			(mprotect((void *)vmas[i].start, vmas[i].end-vmas[i].start, vmas[i].prot)))
+			PERROR("mprotect");
 
 		i++;
 	}
 
-	i = 0;
+	i = j = 0;
+
+	if (shmids) {
+
+		if (!(*shmids = malloc(sizeof(**shmids) * (MAX_REPLICATE_VMA + 1)))) {
+			PERROR("malloc");
+			return -1;
+		}
+
+		memset(*shmids, 0, sizeof(**shmids) * (MAX_REPLICATE_VMA + 1));
+	}
 
 	while (vmas[i].end != 0) {
 
@@ -1319,7 +1423,10 @@ replicate_process_remotely(pid_t pid) {
 			continue;
 		}
 
-		if (!(get_remote_vma(pid, (unsigned long)vmas[i].new_base, vmas[i].end-vmas[i].start, vmas[i].prot, (void *)vmas[i].start))) {
+		if (shmids)
+			(*shmids)[j++] = vmas[i].shmid;
+
+		if (!(get_remote_vma_shm(pid, vmas[i].shmid, (unsigned long)vmas[i].new_base, vmas[i].end-vmas[i].start, vmas[i].prot, (void *)vmas[i].start))) {
 			char execbuf[128];
 
 			PRINT_ERROR("VMA error in mapping: %p -> %p\n", (void *)vmas[i].start, (void *)vmas[i].end);
@@ -1329,6 +1436,8 @@ replicate_process_remotely(pid_t pid) {
 			return -1;
 		}
 
+//		PRINT_ERROR("SHMAT OK: %zu (%d) / %x\n", i, vmas[i].shmid, vmas[i].prot);
+//		fprintf(stderr, "XXX: %d\n", memcmp_remote(pid, (void *)vmas[i].start, vmas[i].end-vmas[i].start, 0));
 		i++;
 	}
 

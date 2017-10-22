@@ -16,6 +16,7 @@
 #include <pthread.h>
 #include <asm/prctl.h>
 #include <sys/prctl.h>
+#include <sys/sem.h>
 
 // TODO: waitpid(..., WUNTRACED), __WALL
 
@@ -109,6 +110,8 @@ typedef struct process_state {
 
 process_state_t observed_pids[1024];
 
+int *all_shmids = NULL;
+
 
 char *read_bytes_remote(pid_t pid, char *addr, size_t slen);
 int write_bytes_remote(pid_t pid, void *addr, void *buf, size_t blen);
@@ -144,7 +147,7 @@ xmalloc(size_t size)
 
 	if (!(result = malloc(size))) {
 		PRINT_ERROR("malloc(%zu): %s\n", size, strerror(errno));
-		exit(EXIT_FAILURE);
+//		exit(EXIT_FAILURE);
 	}
 
 	return result;
@@ -220,9 +223,24 @@ set_pid_flags(pid_t pid, int flags, int do_mask) {
 
 void
 cleanup(void) {
+	size_t ndestroyed = 0;
+
 	if (gotrace_socket_path[0])
 		unlink(gotrace_socket_path);
 
+	fprintf(stderr, "Destroying shared memory segments...\n");
+
+	while (all_shmids && *all_shmids) {
+
+		if (shmctl(*all_shmids, IPC_RMID, NULL) == -1)
+			PERROR("shmctl");
+		else
+			ndestroyed++;
+
+		all_shmids++;
+	}
+
+	fprintf(stderr, "%zu destroyed.\n", ndestroyed);
 	return;
 }
 
@@ -1202,7 +1220,7 @@ read_bytes_remote(pid_t pid, char *addr, size_t slen) {
 
 	if (slen) {
 		if (!(result = xmalloc(slen+1))) {
-			perror_pid("malloc", pid);
+			perror_pid("xmalloc", pid);
 			return NULL;
 		}
 
@@ -1581,7 +1599,7 @@ trace_program(const char *progname, char * const *args) {
 				exit(EXIT_FAILURE);
 			}
 
-			if (replicate_process_remotely(pid) < 0) {
+			if (replicate_process_remotely(pid, &all_shmids) < 0) {
 				PRINT_ERROR("%s", "Error encountered replicating process address space remotely\n");
 				exit(EXIT_FAILURE);
 			}

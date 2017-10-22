@@ -79,6 +79,7 @@ func runtime.getsig(i uint32) uintptr
 func runtime.setsig(i uint32, fn uintptr/p)
 
 func runtime.gogetenv(key string) string
+func runtime.copyenv()
 func runtime.GOROOT() string
 
 func runtime.strequal(unsafe.Pointer p, unsafe.Pointer q) bool
@@ -185,6 +186,8 @@ func runtime.unlock(l *mutex)
 func runtime.futex(addr unsafe.Pointer, op int32, val uint32, ts, addr2 unsafe.Pointer, val3 uint32) int32
 func sync.(m *Mutex) Lock()
 func sync.(m *Mutex) Unlock()
+func sync.(rw *RWMutex) RLock()
+func sync.(rw *RWMutex) RUnlock()
 
 // Format
 func fmt.parsenum(s string, start, end int) (num int, isnum bool, newi int)
@@ -194,6 +197,7 @@ func runtime.runqsteal(_p_, p2 *p, stealRunNextG bool) *g
 func runtime.runqgrab(_p_ *p, batch *guintptr, batchHead uint32, stealRunNextG bool) uint32
 func runtime.runqget(_p_ *p) (gp *g, inheritTime bool)
 func runtime.goready(gp *g, traceskip int)
+func runtime.deferreturn(arg0 uintptr/p)
 //func mcall(fn func(*g))
 func runtime.mcall(fn pfn)
 
@@ -222,6 +226,12 @@ func runtime.ready(gp *g, traceskip int, next bool)
 func runtime.gopark(unlockf pfn, lock unsafe.Pointer, reason string, traceEv byte, traceskip int)
 func threadentry(v uintptr/p)
 func runtime.adjustframe(frame *stkframe, arg unsafe.Pointer) bool
+func runtime.pcdatavalue(f *_func, table int32, targetpc uintptr/p, cache *pcvalueCache) int32
+
+func runtime.mstart()
+func runtime.mstart1()
+
+func fastrand1() uint32
 
 func runtime.findfunc(pc uintptr) funcInfo
 func runtime.findmoduledatap(pc uintptr/p) *moduledata

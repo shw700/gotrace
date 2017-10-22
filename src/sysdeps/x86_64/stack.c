@@ -427,8 +427,8 @@ read_string_remote(pid_t pid, char *addr, size_t slen) {
 	size_t nread = 0;
 
 	if (slen) {
-		if (!(result = malloc(slen+1))) {
-			PRINT_ERROR("malloc(%zu): %s\n", slen+1, strerror(errno));
+		if (!(result = xmalloc(slen+1))) {
+			PRINT_ERROR("xmalloc(%zu): %s\n", slen+1, strerror(errno));
 			return NULL;
 		}
 

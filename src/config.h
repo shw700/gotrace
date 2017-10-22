@@ -281,10 +281,11 @@ unsigned long call_remote_syscall(pid_t pid, int syscall_no, unsigned long r1,
 	unsigned long r2, unsigned long r3, unsigned long r4, unsigned long r5, unsigned long r6);
 unsigned long call_remote_mmap(pid_t pid, void *addr, size_t length, int prot, int flags, int fd, off_t offset);
 int call_remote_mprotect(pid_t pid, void *addr, size_t len, int prot);
+unsigned long call_remote_shmat(pid_t pid, int shmid, const void *shmaddr, int shmflg);
 uintptr_t call_remote_lib_func(pid_t pid, void *faddr, uintptr_t r1, uintptr_t r2, uintptr_t r3,
 	uintptr_t r4, uintptr_t r5, uintptr_t r6, int allow_event);
 unsigned long get_fs_base_remote(pid_t pid);
-int replicate_process_remotely(pid_t pid);
+int replicate_process_remotely(pid_t pid, int **shmids);
 
 
 void dump_wait_state(pid_t pid, int status, int force);
@@ -341,27 +342,27 @@ do { \
 #define PRINT_COLOR(color, fmt, ...)	fprintf(stderr, color fmt RESET, __VA_ARGS__)
 //#define PRINT_ERROR(fmt, ...)		PRINT_COLOR(BOLDRED, fmt, __VA_ARGS__)
 #define PRINT_ERROR	PRINT_ERROR_SAFE
-#define PRINT_ERROR_SAFE(fmt, ...)	do { char buf[1024]; memset(buf, 0, sizeof(buf));	\
-					snprintf(buf, sizeof(buf), BOLDRED fmt RESET, __VA_ARGS__);	\
-					if (write(STDERR_FILENO, buf, strlen(buf))) { }  \
+#define PRINT_ERROR_SAFE(fmt, ...)	do { char ___buf[1024]; memset(___buf, 0, sizeof(___buf));	\
+					snprintf(___buf, sizeof(___buf), BOLDRED fmt RESET, __VA_ARGS__);	\
+					if (write(STDERR_FILENO, ___buf, strlen(___buf))) { }  \
 					fsync(STDERR_FILENO); } while (0)
 #define PERROR(func)	do {	\
-				char errbuf[256], *e;	\
-				memset(errbuf, 0, sizeof(errbuf));	\
-				if ((e = strerror_r(errno, errbuf, sizeof(errbuf)))) { }	\
-				PRINT_ERROR("%s: %s\n", func, e);	\
+				char ___errbuf[256], *___e;	\
+				memset(___errbuf, 0, sizeof(___errbuf));	\
+				if ((___e = strerror_r(errno, ___errbuf, sizeof(___errbuf)))) { }	\
+				PRINT_ERROR("%s: %s\n", func, ___e);	\
 			} while (0)
 #define PERROR_PRINTF(fmt,...)	do {	\
-						char msgbuf[256];	\
-						ssize_t max = sizeof(msgbuf);	\
-						memset(msgbuf, 0, sizeof(msgbuf));	\
-						max -= snprintf(msgbuf, sizeof(msgbuf), fmt, __VA_ARGS__);	\
-						if (max > 3) {	\
-							char errbuf[256];	\
-							memset(errbuf, 0, sizeof(errbuf));	\
-							if (strerror_r(errno, errbuf, sizeof(errbuf))) { }	\
-							snprintf(&msgbuf[strlen(msgbuf)], max, ": %s\n", errbuf);	\
-							if (write(STDERR_FILENO, msgbuf, strlen(msgbuf))) { }	\
+						char ___msgbuf[256];	\
+						ssize_t ___max = sizeof(___msgbuf);	\
+						memset(___msgbuf, 0, sizeof(___msgbuf));	\
+						___max -= snprintf(___msgbuf, sizeof(___msgbuf), fmt, __VA_ARGS__);	\
+						if (___max > 3) {	\
+							char ___errbuf[256];	\
+							memset(___errbuf, 0, sizeof(___errbuf));	\
+							if (strerror_r(errno, ___errbuf, sizeof(___errbuf))) { }	\
+							snprintf(&___msgbuf[strlen(___msgbuf)], ___max, ": %s\n", ___errbuf);	\
+							if (write(STDERR_FILENO, ___msgbuf, strlen(___msgbuf))) { }	\
 							fsync(STDERR_FILENO);	\
 						}	\
 					} while (0)
