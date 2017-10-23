@@ -218,7 +218,22 @@ struct lt_symbol {
 };
 
 
+/*
+ * These stubs are here in case the need for debugging arises.
+ * In this case, under the circumstances, we have almost no recourse
+ * except to use a home-brewed version of electric fence, since neither
+ * the original works, nor will valgrind in a debugging state.
+ */
+
 void *xmalloc(size_t size);
+//extern void *xmalloc(size_t size);
+//extern void xfree(void *ptr);
+//extern void *xrealloc(void *ptr, size_t size);
+
+//#define xmalloc		malloc
+#define xfree		free
+#define xrealloc	realloc
+#define xstrdup		strdup
 
 
 /* audit */

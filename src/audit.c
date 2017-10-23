@@ -112,7 +112,7 @@ static int check_flow_below(const char *symname, int in, lt_tsd_t *tsd)
 
 static void free_argbuf(int argret, char *argbuf, char *argdbuf)
 {
-	XFREE(argbuf);
+	xfree(argbuf);
 
 	if (argret)
 		return;
@@ -132,8 +132,7 @@ int sym_entry(const char *symname, void *ptr, char *lib_from, char *lib_to,
 
 //	fprintf(stderr, "XXX: SYM_ENTRY: %d / %s\n", target, symname);
 
-	XMALLOC_ASSIGN(argbuf, LR_ARGS_MAXLEN);
-	if (!argbuf)
+	if (!(argbuf = xmalloc(LR_ARGS_MAXLEN)))
 		return -1;
 
 	memset(argbuf, 0, LR_ARGS_MAXLEN);

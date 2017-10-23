@@ -145,7 +145,6 @@ func runtime.deltimer(t *timer) bool
 func errors.New(text string) error
 
 // Networking
-//func epollwait(epfd int32, ev *epollevent, nev, timeout int32) int32
 func runtime.epollwait~(epfd int32, ev *epollevent, nev int32, timeout int32) int32
 func runtime.netpollready(gpp *guintptr, pd *pollDesc, mode int32)
 func runtime.netpoll(block bool) *g
@@ -235,7 +234,7 @@ func fastrand1() uint32
 
 func runtime.findfunc(pc uintptr) funcInfo
 func runtime.findmoduledatap(pc uintptr/p) *moduledata
-//func runtime.step(p []byte, pc *uintptr, val *int32, first bool) (newp []byte, ok bool)
+func runtime.step(p []byte, pc *uintptr, val *int32, first bool) (newp []byte, ok bool)
 func runtime.stackmapdata(stkmap *stackmap, n int32) bitvector
 func runtime.handoffp(_p_ *p)
 //func newm(fn func(), _p_ *p)
@@ -265,8 +264,8 @@ func strings.IndexByte~(s string, c byte) int
 func runtime.findnull(s *byte) int
 func runtime.gostring(p *byte) string
 func runtime.gostringnocopy(str *byte) string
-//func runtime.rawstring(size int) (s string, b []byte)
-//func runtime.rawstringtmp(buf *tmpBuf, l int) (s string, b []byte)
+func runtime.rawstring(size int) (s string, b []byte)
+func runtime.rawstringtmp(buf *tmpBuf, l int) (s string, b []byte)
 func runtime.slicebytetostring(buf *tmpBuf, b []byte) (str string)
 func runtime.concatstrings(buf *tmpBuf, a []string) string
 

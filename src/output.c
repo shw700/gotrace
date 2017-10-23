@@ -123,11 +123,16 @@ sprintf_cat(char *buf, size_t bufsize, char *fmt, ...)
 	if (csize < 0)
 		return NULL;
 
-	if (!buf)
-		XSTRDUP_ASSIGN(result, tmpbuf);
-	else {
+	if (!buf) {
+		// XXX: can change back to strdup() in near future
+		if (!(result = xmalloc(strlen(tmpbuf)+1))) {
+			PERROR("xmalloc");
+			exit(EXIT_FAILURE);
+		}
+		strcpy(result, tmpbuf);
+	} else {
 		nsize = strlen(buf) + csize + 1;
-		XREALLOC_ASSIGN(result, buf, nsize);
+		result = xrealloc(buf, nsize);
 		strncat(result, tmpbuf, csize);
 	}
 
@@ -162,9 +167,9 @@ buffer_output_data(pid_t tid, const char *output, int nest_level, int do_prefix)
 	nlen += strlen(output) + 1;
 
 	if (was_empty)
-		XMALLOC_ASSIGN(outbuf, nlen);
+		outbuf = xmalloc(nlen);
 	else
-		XREALLOC_ASSIGN(outbuf, tb->buf, nlen);
+		outbuf = xrealloc(tb->buf, nlen);
 
 	if (!outbuf) {
 		PRINT_ERROR("%s", "Error: unable to allocate memory for output buffer");
@@ -291,19 +296,17 @@ int lt_out_entry(struct lt_config_shared *cfg,
 		(*nsuppressed)++;
 		return 0;
 	}
-//	fprintf(stderr, "lt_out_entry 1: %s / %d\n", symname, tid);
 
 	if (collapsed == COLLAPSED_NESTED) {
 		PRINT_DATA(buffered, "%s()", symname);
 
 		if (outbuf) {
 			buffer_output_data(tid, outbuf, indent_depth, 1);
-			XFREE(outbuf);
+			xfree(outbuf);
 		}
 
 		return 0;
 	}
-//	fprintf(stderr, "lt_out_entry 2: %s / %d\n", symname, tid);
 
 	if (cfg->timestamp && tv) {
 		if (buffered)
@@ -366,7 +369,7 @@ int lt_out_entry(struct lt_config_shared *cfg,
 
 	if (outbuf) {
 		buffer_output_data(tid, outbuf, indent_depth, 0);
-		XFREE(outbuf);
+		xfree(outbuf);
 	}
 
 	return 0;
@@ -414,7 +417,7 @@ int lt_out_exit(struct lt_config_shared *cfg,
 		} else
 			fprintf(cfg->fout, "%s", prefix);
 
-		XFREE(prefix);
+		xfree(prefix);
 		*nsuppressed = 0;
 	}
 

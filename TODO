@@ -2,10 +2,9 @@ remove transformer call stacks?
 * analysis of clone call should not occur in dump_wait_state() function
 can slice be read in before pass-off to arch-general display funcs?
 getenv() is now broken in injected module code
-* possible bug in handling slices, i.e. rawstring()
+* get floats working quickly?
+* get rid of XMALLOC/XSTRDUP*
 
-problematic function decoding:
-	runtime.step()
 
 Major updates needed:
 	1. Get cgo calling working again

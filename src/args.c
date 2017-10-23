@@ -1525,10 +1525,9 @@ static char *massage_string(const unsigned char *s, size_t slen)
 	if (!slen)
 		slen = strlen((char *)s);
 
-	rlen = (slen * 2) + 6;
+	rlen = (slen * 4) + 6;
 
-	XMALLOC_ASSIGN(result, rlen);
-	if (!result)
+	if (!(result = xmalloc(rlen)))
 		return NULL;
 
 	memset(result, 0, rlen);
@@ -1582,6 +1581,8 @@ static int getstr_pod(struct lt_config_shared *cfg, pid_t pid, int dspname, stru
 	if (alen < 5)
 		return 0;
 
+	*arglen = 0;
+
 #define MAX_SLICE_DISP_SIZE	1024
 	if (arg->pointer == -1) {
 		char *d1 = dspname ? arg->name : "";
@@ -1616,16 +1617,14 @@ static int getstr_pod(struct lt_config_shared *cfg, pid_t pid, int dspname, stru
 		}
 
 		if (s)
-			XFREE(s);
+			xfree(s);
 
 		if (ms)
-			XFREE(ms);
+			xfree(ms);
 
 		goto out;
 	}
 	
-	*arglen = 0;
-
 	if (arg->real_type_name && (!strcmp(arg->real_type_name, "_type") &&
 			arg->pointer)) {
 		const char *dname1, *dname2, *tname;
@@ -1871,7 +1870,7 @@ do {                                                                 \
 					int left = alen;
 					int info_len = 0;
 
-					free(val);
+					xfree(val);
 
 					if (!s) {
 						len = snprintf(argbuf, alen, "[error reading string]");
@@ -1893,7 +1892,8 @@ do {                                                                 \
 						strcat(argbuf, s);
 						strcat(argbuf, "\"");
 					}
-					XFREE(s);
+
+					xfree(s);
 				} else
 					len = snprintf(argbuf, alen, "nil");
 			} else {

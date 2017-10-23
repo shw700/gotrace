@@ -91,10 +91,10 @@ char gotrace_socket_path[128];
 char *excluded_intercepts[] = {
 //	"runtime.(*mcache).refill",
 //	"runtime.cgocall",
-	"runtime.rawstringtmp",
+/*	"runtime.rawstringtmp",
 	"runtime.slicebytetostring",
 	"net.absDomainName",
-	"net.appendHex"
+	"net.appendHex"*/
 };
 
 pid_t master_pid = -1;
@@ -1322,7 +1322,7 @@ print_instruction(pid_t pid, void *addr, size_t len) {
 		break;
 	}
 
-	free(rdata);
+	xfree(rdata);
 	return;
 }
 
