@@ -1222,6 +1222,19 @@ struct lt_arg* lt_args_getarg(struct lt_config_shared *cfg, const char *type,
 					*nptr = '/';
 				nptr++;
 			}
+
+			nptr--;
+
+			// Strip modifier from end of transformed name
+			switch(*nptr) {
+				case '!':
+				case '~':
+				case '^':
+					*nptr = 0;
+				default:
+					break;
+			}
+
 		}
 
 	}
@@ -1573,7 +1586,7 @@ static int getstr_pod(struct lt_config_shared *cfg, pid_t pid, int dspname, stru
 	if (arg->pointer == -1) {
 		char *d1 = dspname ? arg->name : "";
 		char *d2 = dspname ? LT_EQUAL : "";
-		char *s, *ms = NULL;
+		char *s = NULL, *ms = NULL;
 		int is_byte_string;
 
 		is_byte_string = ((arg->type_id == LT_ARGS_TYPEID_CHAR) || (arg->type_id == LT_ARGS_TYPEID_INT8) ||
@@ -1584,14 +1597,10 @@ static int getstr_pod(struct lt_config_shared *cfg, pid_t pid, int dspname, stru
 			goto out;
 		}
 
-		if ((s = read_string_remote(pid, pval, psize))) {
-			if (!psize) {
-				len = snprintf(argbuf, alen, "%s%s[%zu]{}", d1, d2, psize);
-				// XXX: this should not be a crash! */
-//				xfree(s);
-				goto out;
-			}
-
+		if (!psize) {
+			len = snprintf(argbuf, alen, "%s%s[0]{}", d1, d2);
+			goto out;
+		} else if ((s = read_string_remote(pid, pval, psize))) {
 			ms = massage_string((unsigned char *)s, psize);
 		} else
 			PRINT_ERROR("Error allocating slice of advertised size %zu bytes\n", psize);

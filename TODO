@@ -4,8 +4,8 @@ can slice be read in before pass-off to arch-general display funcs?
 * getenv() is now broken in injected module code
 complex type missing... but who cares for now?
 get floats working quickly?
-* crash condition in calling free after read_string_remote() in src/args.c
 * prevent crashy vma copy by halting memcpy() at brk() limit
+* collapsing is broken
 
 
 Major updates needed:

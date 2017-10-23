@@ -84,10 +84,25 @@ func runtime.GOROOT() string
 
 func runtime.strequal(unsafe.Pointer p, unsafe.Pointer q) bool
 
+// Atomic operations
 func runtime.atomicstorep(ptr unsafe.Pointer, new unsafe.Pointer)
-
-//func StorePointer(addr *unsafe.Pointer, val unsafe.Pointer)
-//void sync/atomic.StorePointer(void **addr, void *val)
+func sync\atomic.LoadPointer(addr *unsafe.Pointer) unsafe.Pointer
+func sync\atomic.LoadUint32(addr *uint32) uint32
+func sync\atomic.LoadUint64(addr *uint64) uint64
+func sync\atomic.LoadUintptr(addr *uintptr) uintptr/p
+func sync\atomic.StorePointer(addr *unsafe.Pointer, val unsafe.Pointer)
+func sync\atomic.StoreInt32(addr *int32, val int32)
+func sync\atomic.StoreUint32(addr *uint32, val uint32)
+func sync\atomic.AddInt32(addr *int32, delta int32) (new int32)
+func sync\atomic.AddUint32(addr *uint32, delta uint32) (new uint32)
+func sync\atomic.CompareAndSwapInt32(addr *int32, old, new int32) (swapped bool)
+func sync\atomic.CompareAndSwapInt64(addr *int64, old, new int64) (swapped bool)
+func sync\atomic.CompareAndSwapUint32(addr *uint32, old, new uint32) (swapped bool)
+func sync\atomic.CompareAndSwapUint64(addr *uint64, old, new uint64) (swapped bool)
+func sync\atomic.CompareAndSwapUintptr(addr *uintptr, old, new uintptr) (swapped bool)
+func sync\atomic.CompareAndSwapPointer(addr *unsafe.Pointer, old, new unsafe.Pointer) (swapped bool)
+func runtime\internal\atomic.Xadd(ptr *uint32, delta int32) uint32
+func runtime\internal\atomic.Xadd64(ptr *uint64, delta int64) uint64
 
 func runtime.casp(ptr *unsafe.Pointer, old, new unsafe.Pointer) bool
 func runtime.casgstatus(gp *g, oldval, newval uint32)
@@ -128,6 +143,7 @@ func runtime.exit(code int32)
 func runtime.sleep(ms int32) int32
 func runtime.usleep(usec uint32)
 func runtime.futexsleep(addr *uint32, val uint32, ns int64)
+func runtime.futexwakeup(addr *uint32, cnt uint32)
 func runtime.notetsleep(n *note, ns int64) bool
 func runtime.nanotime() int64
 func runtime.unixnanotime() int64
@@ -140,6 +156,7 @@ func runtime.notewakeup(n *note)
 func timer.Sleep(d Duration)
 func runtime.addtimer(t *timer)
 func runtime.deltimer(t *timer) bool
+func runtime.cputicks() int64
 
 // Errors
 func errors.New(text string) error
@@ -162,6 +179,8 @@ func net.ResolveTCPAddr(network string, address string) (*net.TCPAddr, error)
 func net.absDomainName(b []byte) string
 func net.IP.To4() IP
 func net.parseLiteralIP(addr string) string
+func net.isDomainName(s string)
+//func net.ParseCIDR(s string) (IP, *IPNet, error)
 //func (ip IP) String() string
 func net.IP.String() string
 func net.appendHex(dst []byte, i uint32) []byte
@@ -177,13 +196,15 @@ func net.xtoi(s string) (n int, i int, ok bool)
 func time.now() (sec int64, nsec int32, mono int64)
 
 func runtime.readvarint(p []byte) (newp []byte, val uint32)
-func runtime/internal/atomic.Load(ptr *uint32) uint32
 func runtime.memmove(to *any, frm *any, length uintptr)
 func runtime.typedmemmove(t *rtype, dst, src unsafe.Pointer)
 
 func runtime.lock(l *mutex)
 func runtime.unlock(l *mutex)
 func runtime.futex(addr unsafe.Pointer, op int32, val uint32, ts, addr2 unsafe.Pointer, val3 uint32) int32
+func sync.init()
+func sync.runtime_procPin() int
+func sync.runtime_procUnpin()
 func sync.(m *Mutex) Lock()
 func sync.(m *Mutex) Unlock()
 func sync.(rw *RWMutex) RLock()
@@ -192,22 +213,34 @@ func sync.(rw *RWMutex) RUnlock()
 // Format
 func fmt.parsenum(s string, start, end int) (num int, isnum bool, newi int)
 
+func runtime.findrunnable() (gp *g, inheritTime bool)
 func runtime.runqsteal(_p_, p2 *p, stealRunNextG bool) *g
+func runtime.gopreempt_m(gp *g)
+func runtime.goschedImpl(gp *g)
 //func runqgrab(_p_ *p, batch *[256]guintptr, batchHead uint32, stealRunNextG bool) uint32
 func runtime.runqgrab(_p_ *p, batch *guintptr, batchHead uint32, stealRunNextG bool) uint32
 func runtime.runqget(_p_ *p) (gp *g, inheritTime bool)
+func runtime.runqput(_p_ *p, gp *g, next bool)
 func runtime.goready(gp *g, traceskip int)
 func runtime.deferreturn(arg0 uintptr/p)
 //func mcall(fn func(*g))
 func runtime.mcall(fn pfn)
 func runtime.retake(now int64) uint32
+func runtime.stoplockedm()
+func runtime.sysmon()
 
 func runtime.return0()
 func runtime.adjustsudogs(gp *g, adjinfo *adjustinfo)
 //func systemstack(fn func())
 func runtime.systemstack(fn pfn)
+func runtime.stackpoolalloc(order uint8) gclinkptr
+func runtime.newstack()
+func runtime.morestack()
+func runtime.rewindmorestack(buf *gobuf)
 func runtime.sigaltstack(new, old *stackt)
 func runtime.signalstack(s *stack)
+func runtime.setsigstack(i int32)
+func runtime.initsig(preinit bool)
 func runtime.malg(stacksize int32) *g
 func runtime.sigInstallGoHandler(sig uint32) bool
 func runtime.rt_sigaction(sig uintptr, new, old *sigactiont, size uintptr) int32
@@ -217,18 +250,23 @@ func runtime.schedule()
 func runtime.mput(mp *m)
 func runtime.releasep() *p
 func runtime.pidleput(_p_ *p)
+func runtime.pidleget() *p
 func runtime.readgstatus(gp *g) uint32
 func runtime.mpreinit(mp *m)
 func runtime.publicationBarrier()
+func runtime.writebarrierptr_nostore(dst *uintptr, src uintptr)
 
 func runtime.execute(gp *g, inheritTime bool)
 func runtime.procyield(cycles uint32)
+func runtime.osyield()
 func runtime.ready(gp *g, traceskip int, next bool)
 //func gopark(unlockf func(*g, unsafe.Pointer) bool, lock unsafe.Pointer, reason string, traceEv byte, traceskip int)
 func runtime.gopark(unlockf pfn, lock unsafe.Pointer, reason string, traceEv byte, traceskip int)
+func rnutime.goparkunlock(lock *mutex, reason string, traceEv byte, traceskip int)
 func threadentry(v uintptr/p)
 func runtime.adjustframe(frame *stkframe, arg unsafe.Pointer) bool
 func runtime.pcdatavalue(f *_func, table int32, targetpc uintptr/p, cache *pcvalueCache) int32
+func runtime.jmpdefer(fv *funcval, argp uintptr)
 
 func runtime.gettid() uint32
 
@@ -254,18 +292,27 @@ func runtime.gogo(buf *gobuf)
 func runtime.prefetchnta(addr uintptr/p)
 
 // Slices
-//func makeslice(et *_type, len, cap int) slice
 func runtime.makeslice(et *_type, len, cap int) slice
+func runtime.growslice(t *slicetype, old slice, cap int) slice
 
 func runtime\internal\atomic.Load(ptr *uint32) uint32
 func runtime\internal\atomic.Load64(ptr *uint64) uint64
+func runtime\internal\atomic.Store64(ptr *uint64, val uint64)
+func runtime\internal\atomic.Storeuintptr(ptr *uintptr, new uintptr)
 func runtime\internal\atomic.Xchg(ptr *uint32, new uint32) uint32
+func runtime\internal\atomic.Loaduintptr(ptr *uint32, new uint32) uint32
+func runtime\internal\atomic.Cas(ptr *uint32, old, new uint32) bool
+func runtime\internal\atomic.Cas64(ptr *uint64, old, new uint64) bool
+func runtime\internal\atomic.Casuintptr(ptr *uintptr, old, new uintptr) bool
+func runtime\internal\atomic.Storep1(ptr unsafe.Pointer/p, val unsafe.Pointer/p)$a
+func runtime\internal\atomic.Loadp(ptr unsafe.Pointer) unsafe.Pointer
 
 func runtime.mapassign1(t *maptype, h *hmap, key unsafe.Pointer, val unsafe.Pointer)
 
 func runtime.aeshashstr(p unsafe.Pointer, h uintptr) uintptr/x
 func runtime.aeshash32(p unsafe.Pointer, h uintptr) uintptr/x
 func runtime.aeshash64(p unsafe.Pointer, h uintptr) uintptr/x
+func runtime.evacuate(t *maptype, h *hmap, oldbucket uintptr)
 
 // Strings
 func strings.IndexByte(s string, c byte) int
@@ -295,3 +342,6 @@ func os.(f *File) read(b []byte) (n int, err error)
 func os.(f *File) Read(b []byte) (n int, err error)
 func os.(f *File) Close() error
 func os.NewFile(fd uintptr, name string) *File
+
+// OS
+func os.basename(name string) string
