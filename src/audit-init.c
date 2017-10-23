@@ -175,8 +175,7 @@ int init_custom_handlers(struct lt_config_audit *cfg)
 
 		gdsize = strlen(gsrc) + 8;
 
-		XMALLOC_ASSIGN(globdir, gdsize);
-		if (!globdir)
+		if (!(globdir = malloc(gdsize)))
 			return -1;
 
 		memset(globdir, 0, gdsize);
@@ -290,8 +289,7 @@ int init_custom_handlers(struct lt_config_audit *cfg)
 						continue;
 					}
 
-					XSTRDUP_ASSIGN(e.key, funcname);
-					if (!e.key) {
+					if (!(e.key = strdup(funcname))) {
 						PERROR("strdup");
 						dlclose(handle);
 						return -1;
@@ -319,8 +317,7 @@ int init_custom_handlers(struct lt_config_audit *cfg)
 						continue;
 					}
 
-					XSTRDUP_ASSIGN(e.key, funcname);
-					if (!e.key) {
+					if (!(e.key = strdup(funcname))) {
 						PERROR("strdup");
 						dlclose(handle);
 						return -1;
@@ -348,8 +345,7 @@ int init_custom_handlers(struct lt_config_audit *cfg)
 						continue;
 					}
 
-					XSTRDUP_ASSIGN(e.key, funcname);
-					if (!e.key) {
+					if (!(e.key = strdup(funcname))) {
 						PERROR("strdup");
 						dlclose(handle);
 						return -1;

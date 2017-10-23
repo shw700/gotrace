@@ -1540,7 +1540,7 @@ trace_program(const char *progname, char * const *args) {
 			struct user_regs_struct regs;
 //			char **needed;
 			void *dlhandle, *initfunc = NULL; //, *reloc_base = NULL;
-			char libpath[512];
+			char libpath[512] = { 0 };
 			signed long our_fs, old_fs;
 			int pres;
 

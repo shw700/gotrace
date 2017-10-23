@@ -104,8 +104,7 @@ struct lt_symbol* lt_symbol_bind(struct lt_config_shared *cfg,
 		return s;
 	}
 
-	sym = safe_malloc(sizeof(*sym));
-	if (!sym)
+	if (!(sym = malloc(sizeof(*sym))))
 		return NULL;
 
 	memset(sym, 0, sizeof(*sym));

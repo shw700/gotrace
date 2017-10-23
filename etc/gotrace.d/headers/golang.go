@@ -65,8 +65,8 @@ func runtime.(h *mheap) alloc_m(npage uintptr, sizeclass int32, large bool) *msp
 
 func runtime.heapBits.initSpan(s *mspan)
 func runtime.recordspan(vh unsafe.Pointer, p unsafe.Pointer)
-func runtime.heapBitsSetType~(x, size uintptr, dataSize uintptr, typ *_type)
-func runtime.heapBitsBulkBarrier~(p, size uintptr/p)
+func runtime.heapBitsSetType(x, size uintptr, dataSize uintptr, typ *_type)
+func runtime.heapBitsBulkBarrier(p, size uintptr/p)
 func progToPointerMask(prog *byte, size uintptr) bitvector
 func runtime.runGCProg(prog *byte, trailer, dst *byte, size int) uintptr
 
@@ -114,13 +114,13 @@ func runtime.reentersyscall(pc, sp uintptr/p)
 func syscall.Syscall(trap int64, a1 int64=SYSCALL_NO, a2 int64/p, a3 int64) (r1 int64, r2 int64, err int64)
 func runtime.exitsyscall(dummy int32)
 func runtime.exitsyscallfast() bool
-func runtime.asminit~()
+func runtime.asminit()
 func runtime.asmcgocall(fn, arg unsafe.Pointer) int32
 func runtime.entersyscallblock(dummy int32)
 func syscall.errnoErr(e Errno=errno) error
 
-func runtime.getcallerpc~() uintptr/p
-func runtime.getcallersp~(argp unsafe.Pointer) uintptr/p
+func runtime.getcallerpc() uintptr/p
+func runtime.getcallersp(argp unsafe.Pointer) uintptr/p
 
 func syscall.Write(fd int, p []byte) (n int, err error)
 
@@ -129,7 +129,7 @@ func runtime.sleep(ms int32) int32
 func runtime.usleep(usec uint32)
 func runtime.futexsleep(addr *uint32, val uint32, ns int64)
 func runtime.notetsleep(n *note, ns int64) bool
-func runtime.nanotime~() int64
+func runtime.nanotime() int64
 func runtime.unixnanotime() int64
 func runtime.timediv(v int64, div int32, rem *int32)
 func runtime.timerproc(tb *timersBucket)
@@ -145,12 +145,12 @@ func runtime.deltimer(t *timer) bool
 func errors.New(text string) error
 
 // Networking
-func runtime.epollwait~(epfd int32, ev *epollevent, nev int32, timeout int32) int32
+func runtime.epollwait(epfd int32, ev *epollevent, nev int32, timeout int32) int32
 func runtime.netpollready(gpp *guintptr, pd *pollDesc, mode int32)
 func runtime.netpoll(block bool) *g
 func runtime.netpollinited() bool
 func net.IP.IsLoopback() bool
-func net.isZeros~(p IP) bool
+func net.isZeros(p IP) bool
 func net.selfConnect(fd *netFD, err error) bool
 func net.LookupPort(network, service string) (port int, err error)
 func net.parseIPv4(s string) net.IP
@@ -169,15 +169,16 @@ func net.appendHex(dst []byte, i uint32) []byte
 func syscall.Connect(fd int, sa Sockaddr) (err error)
 func net.setDefaultSockopts(s, family, sotype int, ipv6only bool) error
 
-func net.dtoi~(s string) (n int, i int, ok bool)
-func net.itoa~(val int) string
-func net.uitoa~(val uint) string
-func net.xtoi~(s string) (n int, i int, ok bool)
+func net.dtoi(s string) (n int, i int, ok bool)
+func net.itoa(val int) string
+func net.uitoa(val uint) string
+func net.xtoi(s string) (n int, i int, ok bool)
 
 func time.now() (sec int64, nsec int32, mono int64)
 
+func runtime.readvarint(p []byte) (newp []byte, val uint32)
 func runtime/internal/atomic.Load(ptr *uint32) uint32
-//func runtime.memmove~(to *any, frm *any, length uintptr)
+func runtime.memmove(to *any, frm *any, length uintptr)
 func runtime.typedmemmove(t *rtype, dst, src unsafe.Pointer)
 
 func runtime.lock(l *mutex)
@@ -199,15 +200,17 @@ func runtime.goready(gp *g, traceskip int)
 func runtime.deferreturn(arg0 uintptr/p)
 //func mcall(fn func(*g))
 func runtime.mcall(fn pfn)
+func runtime.retake(now int64) uint32
 
 func runtime.return0()
-func runtime.adjustsudogs~(gp *g, adjinfo *adjustinfo)
+func runtime.adjustsudogs(gp *g, adjinfo *adjustinfo)
 //func systemstack(fn func())
 func runtime.systemstack(fn pfn)
 func runtime.sigaltstack(new, old *stackt)
+func runtime.signalstack(s *stack)
 func runtime.malg(stacksize int32) *g
-func runtime.sigInstallGoHandler~(sig uint32) bool
-func runtime.rt_sigaction~(sig uintptr, new, old *sigactiont, size uintptr) int32
+func runtime.sigInstallGoHandler(sig uint32) bool
+func runtime.rt_sigaction(sig uintptr, new, old *sigactiont, size uintptr) int32
 
 func runtime.checkdead()
 func runtime.schedule()
@@ -216,7 +219,7 @@ func runtime.releasep() *p
 func runtime.pidleput(_p_ *p)
 func runtime.readgstatus(gp *g) uint32
 func runtime.mpreinit(mp *m)
-func runtime.publicationBarrier~()
+func runtime.publicationBarrier()
 
 func runtime.execute(gp *g, inheritTime bool)
 func runtime.procyield(cycles uint32)
@@ -227,15 +230,20 @@ func threadentry(v uintptr/p)
 func runtime.adjustframe(frame *stkframe, arg unsafe.Pointer) bool
 func runtime.pcdatavalue(f *_func, table int32, targetpc uintptr/p, cache *pcvalueCache) int32
 
+func runtime.gettid() uint32
+
 func runtime.mstart()
 func runtime.mstart1()
 
-func fastrand1() uint32
+func runtime.fastrand1() uint32
 
 func runtime.findfunc(pc uintptr) funcInfo
 func runtime.findmoduledatap(pc uintptr/p) *moduledata
+func runtime.funcspdelta(f *_func, targetpc uintptr/p, cache *pcvalueCache) int32
+func runtime.pcvalue(f *_func, off int32, targetpc uintptr/p, cache *pcvalueCache, strict bool) int32
 func runtime.step(p []byte, pc *uintptr, val *int32, first bool) (newp []byte, ok bool)
 func runtime.stackmapdata(stkmap *stackmap, n int32) bitvector
+func runtime.adjustpointer(adjinfo *adjustinfo, vpp unsafe.Pointer)
 func runtime.handoffp(_p_ *p)
 //func newm(fn func(), _p_ *p)
 func runtime.newm(fn pfn, _p_ *p)
@@ -260,7 +268,7 @@ func runtime.aeshash32(p unsafe.Pointer, h uintptr) uintptr/x
 func runtime.aeshash64(p unsafe.Pointer, h uintptr) uintptr/x
 
 // Strings
-func strings.IndexByte~(s string, c byte) int
+func strings.IndexByte(s string, c byte) int
 func runtime.findnull(s *byte) int
 func runtime.gostring(p *byte) string
 func runtime.gostringnocopy(str *byte) string
@@ -270,7 +278,7 @@ func runtime.slicebytetostring(buf *tmpBuf, b []byte) (str string)
 func runtime.concatstrings(buf *tmpBuf, a []string) string
 
 // Bytes
-func bytes.IndexByte~(s []byte, c byte) int
+func bytes.IndexByte(s []byte, c byte) int
 
 // Linker
 func runtime.vdso_find_version(info *vdso_info, ver *version_key) int32

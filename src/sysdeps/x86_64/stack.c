@@ -253,8 +253,10 @@ static int classificate_arg_type(struct lt_config_shared *cfg,
 			class = LT_CLASS_INTEGER;
 			break;
 
-		case LT_ARGS_TYPEID_DOUBLE:
-		case LT_ARGS_TYPEID_FLOAT:
+		case LT_ARGS_TYPEID_FLOAT32:
+		case LT_ARGS_TYPEID_FLOAT64:
+		case LT_ARGS_TYPEID_COMPLEX64:
+		case LT_ARGS_TYPEID_COMPLEX128:
 			// XXX:
 			break;
 
@@ -676,13 +678,13 @@ enter_transformer_callstack(char *symname, struct user_regs_struct *inregs, void
 	{
 		tsd->xfm_call_stack_max = 8;
 		tsd->xfm_call_stack_sz = 0;
-		XMALLOC_ASSIGN(tsd->xfm_call_stack, (sizeof(*tsd->xfm_call_stack) * tsd->xfm_call_stack_max));
+		tsd->xfm_call_stack = malloc(sizeof(*tsd->xfm_call_stack) * tsd->xfm_call_stack_max);
 	} else if (tsd->xfm_call_stack_sz == tsd->xfm_call_stack_max) {
 		size_t new_size;
 
 		tsd->xfm_call_stack_max *= 2;
 		new_size = sizeof(*tsd->xfm_call_stack) * tsd->xfm_call_stack_max;
-		XREALLOC_ASSIGN(tsd->xfm_call_stack, tsd->xfm_call_stack, new_size);
+		tsd->xfm_call_stack = realloc(tsd->xfm_call_stack, new_size);
 	}
 
 	if (!tsd->xfm_call_stack) {
@@ -797,9 +799,7 @@ int lt_stack_process(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 		    (-1 == classificate(cfg, asym, tsd)))
 			return -1;
 
-		XMALLOC_ASSIGN(targs, (sizeof(void *) * asym->argcnt));
-
-		if (!targs)
+		if (!(targs = malloc(sizeof(void *) * asym->argcnt)))
 			return -1;
 
 		size_t cur_off = 0;
@@ -839,7 +839,7 @@ int lt_stack_process(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 		}
 
 /*		if (silent) {
-			XFREE(targs);
+			free(targs);
 			return 0;
 		} */
 
@@ -1047,7 +1047,7 @@ int lt_stack_process_ret(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 			}
 
 			if (inargs)
-				XFREE(inargs);
+				free(inargs);
 
 			if (silent)
 				return 0;

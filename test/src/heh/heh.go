@@ -46,6 +46,13 @@ func Somefunc12(hi int16) (string, string) {
 	return "hello there", "world!"
 }
 
+func Somefunc33(input1, input2 float32) float64 {
+	result := input1 + input2
+// Prevent this function from becoming in-lined
+	_, _ = Somefunc12(31)
+	return float64(result)
+}
+
 /*func Somefunc7(iarr []int) {
 	fmt.Println("GOT ARRAY: ", iarr)
 }
@@ -92,6 +99,9 @@ func main() {
 	Somefunc12(31339)
 
 	ok = Somefunc3("why")
+
+	val := Somefunc33(3.31, 4.278)
+	fmt.Println("val = ", val)
 
 	fmt.Println("go program will sleep for 10 seconds")
 	time.Sleep(10 * time.Second)

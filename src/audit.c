@@ -118,7 +118,7 @@ static void free_argbuf(int argret, char *argbuf, char *argdbuf)
 		return;
 
 	if (lt_sh(&cfg, args_detailed) && (*argdbuf))
-		XFREE(argdbuf);
+		free(argdbuf);
 }
 
 int sym_entry(const char *symname, void *ptr, char *lib_from, char *lib_to,
@@ -228,8 +228,7 @@ int sym_exit(const char *symname, void *ptr, char *lib_from, char *lib_to, pid_t
 		return 0;
 	}
 
-	XMALLOC_ASSIGN(argbuf, LR_ARGS_MAXLEN);
-	if (!argbuf)
+	if (!(argbuf = malloc(LR_ARGS_MAXLEN)))
 		return -1;
 
 	memset(argbuf, 0, LR_ARGS_MAXLEN);
@@ -389,8 +388,7 @@ thread_get_tsd(pid_t tid, int create)
 	if (!pkd && create) {
 		lt_tsd_t *tsd;
 
-		XMALLOC_ASSIGN(tsd, sizeof(lt_tsd_t));
-		if (!tsd) {
+		if (!(tsd = malloc(sizeof(lt_tsd_t)))) {
 			PERROR("Error creating TSD");
 			return NULL;
 		}

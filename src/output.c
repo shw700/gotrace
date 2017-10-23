@@ -199,8 +199,7 @@ buffer_output_data(pid_t tid, const char *output, int nest_level, int do_prefix)
 
 	if (!tb) {
 
-		XMALLOC_ASSIGN(tb, sizeof(*tb));
-		if (!tb) {
+		if (!(tb = malloc(sizeof(*tb)))) {
 			PRINT_ERROR("%s", "Error: unable to allocate memory for output buffer");
 			return;
 		}
@@ -264,7 +263,7 @@ int lt_out_entry(struct lt_config_shared *cfg,
 
 	/* Would probably be helpful to pre-allocate buffer for data and not constantly resize it */
 /*	if (buffered) {
-		XMALLOC_ASSIGN(outbuf, 8192);
+		outbuf = malloc(8192);
 		memset(outbuf, 0, sizeof(outbuf));
 	} */
 
@@ -330,7 +329,7 @@ int lt_out_entry(struct lt_config_shared *cfg,
 		if (cfg->fmt_colors)
 			cur_color = color_table[indent_depth % (sizeof(color_table)/sizeof(color_table[0]))];
 
-	indent_depth %= 30;
+	indent_depth %= 40;
 		PRINT_DATA(buffered, "%.*s", indent_depth * cfg->indent_size, spaces);
 	}
 
@@ -439,7 +438,7 @@ int lt_out_exit(struct lt_config_shared *cfg,
 		if (cfg->fmt_colors)
 			cur_color = color_table[indent_depth % (sizeof(color_table)/sizeof(color_table[0]))];
 
-	indent_depth %= 30;
+	indent_depth %= 40;
 		if ((collapsed <= COLLAPSED_BASIC) && !exited)
 			fprintf(cfg->fout, "%.*s", indent_depth * cfg->indent_size, spaces);
 	}

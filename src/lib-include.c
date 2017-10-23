@@ -124,8 +124,7 @@ int lt_inc_open(struct lt_config_shared *cfg, struct lt_include *inc,
 
 	inc_stack->in     = f;
 
-	XSTRDUP_ASSIGN(inc_stack->file, file);
-	if (!inc_stack->file)
+	if (!(inc_stack->file = strdup(file)))
 		return -1;
 
 	inc_stack->lineno = 1;
@@ -145,7 +144,7 @@ int lt_inc_close(struct lt_config_shared *cfg, struct lt_include *inc)
 	PRINT_VERBOSE(cfg, 1, "buffer closed [%s], depth [%d]\n",
 			inc_stack->file, inc->stack_idx);
 
-	XFREE(inc_stack->file);
+	free(inc_stack->file);
 
 	/* EOF with no other includes on stack */
 	if (!inc->stack_idx)

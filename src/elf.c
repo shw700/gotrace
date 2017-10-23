@@ -91,10 +91,10 @@ add_address_mapping(void *symaddr, size_t size, const char *name) {
 
 	if (!addr_mapping_size) {
 		addr_mapping_size = 128;
-		addr_mappings = safe_malloc(sizeof(*addr_mappings) * addr_mapping_size);
+		addr_mappings = malloc(sizeof(*addr_mappings) * addr_mapping_size);
 	} else if (addr_mapping_used == addr_mapping_size) {
 		addr_mapping_size *= 2;
-		addr_mappings = safe_realloc(addr_mappings, (sizeof(*addr_mappings) * addr_mapping_size));
+		addr_mappings = realloc(addr_mappings, (sizeof(*addr_mappings) * addr_mapping_size));
 	}
 
 	if (!addr_mappings) {
@@ -111,16 +111,13 @@ add_address_mapping(void *symaddr, size_t size, const char *name) {
 
 		addr_mappings[ind].addr = symaddr;
 		addr_mappings[ind].size = size;
-//		XSTRDUP_ASSIGN(addr_mappings[ind].name, name);
-		addr_mappings[ind].name = safe_strdup(name);
+		addr_mappings[ind].name = strdup(name);
 		addr_mapping_used++;
 	} else {
 		// For now, only permit a perfect overwrite
 		if ((addr_mappings[ind].addr == symaddr) && (addr_mappings[ind].size == size)) {
-//			XFREE(addr_mappings[ind].name);
-//			XSTRDUP_ASSIGN(addr_mappings[ind].name, name);
-			safe_free(addr_mappings[ind].name);
-			addr_mappings[ind].name = safe_strdup(name);
+			free(addr_mappings[ind].name);
+			addr_mappings[ind].name = strdup(name);
 		}
 
 	}
@@ -156,8 +153,7 @@ remove_address_mapping(void *symaddr, size_t size, const char *hint, int null_ok
 		// Freeing the whole thing or part of it?
 		// Free the whole thing if our size requests match, or if size==0 was specified
 		if ((addr_mappings[ind].addr == caddr) && ((size == addr_mappings[ind].size) || !size)) {
-//			XFREE(addr_mappings[ind].name);
-			safe_free(addr_mappings[ind].name);
+			free(addr_mappings[ind].name);
 			memmove(&addr_mappings[ind], &addr_mappings[ind+1], sizeof(addr_mappings[0]) * (addr_mapping_used-(ind+1)));
 			addr_mapping_used--;
 		} else {
@@ -413,10 +409,8 @@ _get_all_symbols(symbol_mapping_t **pmap, size_t *msize, void *strtab, size_t st
 
 	rsize = strtab_size + (nsyms * sizeof(symbol_mapping_t));
 
-//	XMALLOC_ASSIGN(result, rsize);
-	result = safe_malloc(rsize);
-	if (!result) {
-		PERROR("xmalloc");
+	if (!(result = malloc(rsize))) {
+		PERROR("malloc");
 		return 0;
 	}
 
@@ -535,10 +529,8 @@ get_all_symbols(struct link_map *lm, symbol_mapping_t **pmap, size_t *msize, int
 
 	rsize = strtab_size + (nsyms * sizeof(symbol_mapping_t));
 
-//	XMALLOC_ASSIGN(result, rsize);
-	result = safe_malloc(rsize);
-	if (!result) {
-		PERROR("xmalloc");
+	if (!(result = malloc(rsize))) {
+		PERROR("malloc");
 		return 0;
 	}
 

@@ -383,20 +383,6 @@ do { \
 					} while (0)
 
 
-#define SANITY_CHECK(ret)		if (!ret) { PRINT_ERROR("%s", "Fatal internal memory error; allocation returned NULL.\n"); }
-
-#define safe_malloc	malloc
-#define safe_strdup	strdup
-#define safe_free	free
-#define safe_realloc	realloc
-
-#define XMALLOC_ASSIGN(val,parm)	do { val = malloc(parm); SANITY_CHECK(val); } while (0)
-#define XREALLOC_ASSIGN(val,p1,p2)	do { val = realloc(p1,p2); SANITY_CHECK(val); } while (0)
-#define XSTRDUP_ASSIGN(val,parm)	do { val = strdup(parm); SANITY_CHECK(val); } while (0)
-#define XFREE(parm)			free(parm)
-
-
-
 #define ANON_PREFIX_INTERNAL	"_anon_"
 #define ANON_PREFIX		"$r"
 
