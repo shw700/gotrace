@@ -978,6 +978,11 @@ int lt_stack_process_ret(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 
 	}
 
+/*	if (ret_offset != asym->stacksz) {
+		PRINT_ERROR("Warning: stack size mismatch for %s() between calculations and expectations: %zu vs %u bytes\n",
+			asym->name, ret_offset, asym->stacksz);
+	}*/
+
 	for (i = 0; i < asym->rargcnt; i++) {
 		size_t psize;
 		int last = (i == asym->rargcnt-1), is_err;

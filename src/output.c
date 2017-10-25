@@ -252,12 +252,15 @@ int lt_out_entry(struct lt_config_shared *cfg,
 {
 	const char *cur_color = NULL;
 	const char *end_line = "{\n";
-	char *outbuf = NULL;
+	char to_buf[128], *outbuf = NULL;
 	int buffered, has_args = 1;
 
 //	fprintf(stderr, "lt_out_entry: %s / %d\n", symname, tid);
 
-	lib_to = "";
+	memset(to_buf, 0, sizeof(to_buf));
+
+	if (cfg->show_modules && lib_to && *lib_to)
+		snprintf(to_buf, sizeof(to_buf), "%s:", lib_to);
 
 	buffered = (collapsed > 0);
 
@@ -346,12 +349,12 @@ int lt_out_entry(struct lt_config_shared *cfg,
 	/* Print the symbol and arguments. */
 	if (cur_color) {
 		if (has_args)
-			PRINT_DATA(buffered, "%s%s%s%s(%s%s%s) %s",
-					BOLD, cur_color, symname, RESET,
+			PRINT_DATA(buffered, "%s%s%s%s%s%s(%s%s%s) %s",
+					RESET, to_buf, BOLD, cur_color, symname, RESET,
 					cur_color, argbuf, RESET, end_line);
 		else
-			PRINT_DATA(buffered, "%s%s%s %c\n",
-					cur_color, symname, RESET, cfg->braces ? '{' : ' ');
+			PRINT_DATA(buffered, "%s%s%s%s%s %c\n",
+					RESET, to_buf, cur_color, symname, RESET, cfg->braces ? '{' : ' ');
 	} else {
 		if (has_args)
 			PRINT_DATA(buffered, "%s(%s) %s", symname, argbuf, end_line);

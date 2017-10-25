@@ -35,7 +35,6 @@
 #include <sys/user.h>
 
 #include "config.h"
-#include "elfh.h"
 
 
 extern struct lt_config_audit cfg;

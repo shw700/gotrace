@@ -149,6 +149,8 @@ struct lt_args_sym {
 #define LT_ARGS_RET 0
 	struct lt_arg **args;
 	struct lt_arg **ret_args;
+
+	unsigned short stacksz;
 };
 
 /* used in lt_args_cb_struct for argument type */

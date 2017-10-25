@@ -31,7 +31,6 @@
 
 #include "config.h"
 #include "lib-include.h"
-#include "elfh.h"
 
 #include "gomod_print/gomod_print.h"
 

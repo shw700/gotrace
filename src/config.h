@@ -35,6 +35,7 @@
 #include <sys/user.h>
 
 #include "list.h"
+#include "elfh.h"
 
 
 typedef struct function_call {
@@ -126,6 +127,7 @@ struct lt_config_shared {
 	int braces;
 	int fmt_colors;
 	int resolve_syms;
+	int show_modules;
 	int counts;
 	int hide_tid;
 	int not_follow_exec;
@@ -292,6 +294,7 @@ char *read_string_remote(pid_t pid, char *addr, size_t slen);
 char **get_all_so_needed(const char *dsopath, char **curdeps);
 int open_dso_and_get_segments(const char *soname, pid_t pid, void **pinit_func, void **reloc_base, int open_all);
 void *get_entry_point(const char *dsopath);
+int get_pcdata(const char *dsopath, void *base_add, symbol_mapping_t *symmap, size_t mapsize);
 unsigned long call_remote_syscall(pid_t pid, int syscall_no, unsigned long r1,
 	unsigned long r2, unsigned long r3, unsigned long r4, unsigned long r5, unsigned long r6);
 unsigned long call_remote_mmap(pid_t pid, void *addr, size_t length, int prot, int flags, int fd, off_t offset);

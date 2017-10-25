@@ -246,7 +246,25 @@ lookup_addr(void *addr) {
 		if (!symbol_store[i].l)
 			continue;
 
-		if ((name = get_addr_name(symbol_store[i].map, symbol_store[i].msize, addr)))
+		if ((name = get_addr_name(symbol_store[i].map, symbol_store[i].msize, addr, NULL, NULL, NULL)))
+			return name;
+
+	}
+
+	return NULL;
+}
+
+const char *
+lookup_addr_info(void *addr, size_t *pargsize, char **fname, size_t *line_no) {
+	size_t i;
+
+	for (i = 0; i < sizeof(symbol_store)/sizeof(symbol_store[0]); i++) {
+		const char *name;
+
+		if (!symbol_store[i].l)
+			continue;
+
+		if ((name = get_addr_name(symbol_store[i].map, symbol_store[i].msize, addr, pargsize, fname, line_no)))
 			return name;
 			
 	}
@@ -583,13 +601,26 @@ get_sym_addr(symbol_mapping_t *map, size_t sz, const char *name) {
 }
 
 const char *
-get_addr_name(symbol_mapping_t *map, size_t sz, void *addr) {
+get_addr_name(symbol_mapping_t *map, size_t sz, void *addr, size_t *pargsize, char **pfilename, size_t *pline_no) {
 	size_t i;
+
+	if (pargsize)
+		*pargsize = 0;
 
 	for (i = 0; i < sz; i++) {
 
-		if (((void *)map[i].addr == addr))
+		if (((void *)map[i].addr == addr)) {
+			if (pargsize)
+				*pargsize = map[i].argsize;
+
+			if (pfilename)
+				*pfilename = map[i].fname;
+
+			if (pline_no)
+				*pline_no = map[i].lineno;
+
 			return (void *)map[i].name;
+		}
 
 	}
 

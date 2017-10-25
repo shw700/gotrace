@@ -21,7 +21,6 @@
 // TODO: waitpid(..., WUNTRACED)
 
 #include "config.h"
-#include "elfh.h"
 #include "args.h"
 
 #include <zydis/include/Zydis/Zydis.h>
@@ -470,9 +469,9 @@ check_remote_intercept(pid_t pid, void *pc, struct user_regs_struct *regs) {
 			lt_tsd_t *tsdx = thread_get_tsd(pid, 1);
 
 			if (remote_intercepts[i].is_entry)
-				ret = sym_entry(symname, lts, "from", "to", pid, regs, tsdx);
+				ret = sym_entry(symname, lts, "from", "", pid, regs, tsdx);
 			else
-				ret = sym_exit(symname, lts, "from", "to", pid, regs, regs, tsdx);
+				ret = sym_exit(symname, lts, "from", "", pid, regs, regs, tsdx);
 
 			return 0;
 		}
@@ -506,7 +505,8 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 	struct user_regs_struct regs;
 	const char *symname;
 	long retrace, ret_addr;
-	size_t i, ra;
+	size_t i, ra, argsize, line_no;
+	char *fname = NULL;
 	int pflags, ret, is_return = 0;
 
 /*	if (WIFSTOPPED(status) && WSTOPSIG(status) == SIGUSR1) {
@@ -658,7 +658,8 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 		}
 
 //		printf("RET ADDR would have been %lx\n", ret_addr);
-		symname = lookup_addr(hot_pc);
+		symname = lookup_addr_info(hot_pc, &argsize, &fname, &line_no);
+
 		if (set_ret_intercept(pid, symname, (void *)ret_addr, &ridx) < 0) {
 			PRINT_ERROR("%s", "Error: could not set intercept on return address\n");
 	//		return -1;
@@ -692,7 +693,9 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 		return -1;
 	}
 
-	lts = lt_symbol_bind(cfg.sh, hot_pc, symname);
+	if ((lts = lt_symbol_bind(cfg.sh, hot_pc, symname)))
+		lts->args->stacksz = argsize;
+
 	lt_tsd_t *tsdx = thread_get_tsd(pid, 1);
 
 	if (!is_pid_monitored(pid, &pflags))
@@ -706,7 +709,7 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 	//		return 1;
 		} else {
 	//	fprintf(stderr, "HEH: %d / %s / %p\n", pid, symname, tsdx);
-			ret = sym_entry(symname, lts, "from", "to", pid, &regs, tsdx);
+			ret = sym_entry(symname, lts, "from", fname, pid, &regs, tsdx);
 		}
 
 	}
@@ -1657,8 +1660,24 @@ trace_program(const char *progname, char * const *args) {
 
 			// The pid returned is our module's socket loop (native code)
 			if (ptrace(PTRACE_SETOPTIONS, pres, NULL, 0) < 0) {
+				int wstatus;
+
 				perror_pid("ptrace(~PTRACE_SETOPTIONS)", pres);
-				exit(EXIT_FAILURE);
+
+				// Let's at least try to figure out what went wrong.
+				if (waitpid(pres, &wstatus, 0) == -1)
+					perror_pid("waitpid", pres);
+				else
+					dump_wait_state(pres, wstatus, 1);
+
+				PRINT_ERROR("Retrying PTRACE_SETOPTIONS on pid %d.\n", pres);
+
+				if (ptrace(PTRACE_SETOPTIONS, pres, NULL, 0) < 0) {
+					PRINT_ERROR("%s", "failed again\n");
+					exit(EXIT_FAILURE);
+				} else
+					PRINT_ERROR("%s", "DID NOT fail again\n");
+
 			}
 
 			if (set_fs_base_remote(pid, old_fs) < 0) {
@@ -1766,8 +1785,8 @@ trace_program(const char *progname, char * const *args) {
 
 	}
 
-	fprintf(stderr, "Waiting 3 seconds...\n");
-	sleep(3);
+	fprintf(stderr, "Waiting a second...\n");
+	sleep(1);
 
 	return 0;
 }
@@ -1946,6 +1965,7 @@ balloon(void) {
 int
 main(int argc, char *argv[]) {
 	static struct lt_config_shared cfg_sh;
+	void *firstmodulep;
 	char *progname = argv[1];
 	int syms_ok;
 
@@ -1954,7 +1974,7 @@ main(int argc, char *argv[]) {
 		exit(EXIT_FAILURE);
 	}
 
-	printf("Starting up...\n");
+	fprintf(stderr, "Starting up...\n");
 
 	trace_init();
 
@@ -1966,6 +1986,7 @@ main(int argc, char *argv[]) {
         cfg_sh.fmt_colors = 1;
         cfg_sh.braces = 1;
         cfg_sh.resolve_syms = 1;
+	cfg_sh.show_modules = getenv("GOTRACE_SHOW_MODULES") != NULL;
 
 	balloon();
 
@@ -1978,6 +1999,14 @@ main(int argc, char *argv[]) {
 		fprintf(stderr, "Error: could not read symbols from debug object\n");
 		exit(EXIT_FAILURE);
 	}
+
+	if (!(firstmodulep = lookup_symbol("runtime.firstmoduledata"))) {
+		PRINT_ERROR("%s", "Error: could not resolve firstmoduledata in target program\n");
+		exit(EXIT_FAILURE);
+	}
+
+	if (get_pcdata(argv[1], firstmodulep, symbol_store[0].map, symbol_store[0].msize) < 0)
+		PRINT_ERROR("%s", "Warning: could not read PCDATA from target program\n");
 
 	scan_interfaces();
 

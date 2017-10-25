@@ -5,9 +5,9 @@ complex type missing... but who cares for now?
 get floats working quickly?
 prevent crashy vma copy by halting memcpy() at brk() limit?
 * collapsing is broken
+use proper bounds checking in parsing ELF virtual addresses for PCDATA lookup
 
 
 Major updates needed:
 	1. Get cgo calling working again
 	2. Function hooking should use allocated jmpbufs instead of replace-and-single-step
-	3. PCData integration

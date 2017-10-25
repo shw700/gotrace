@@ -17,11 +17,16 @@
 
 #define MAX_SO_NEEDED	64
 
+#define elf_load_library(dso,fd,dsize,pe,ph,ps)	elf_load_object(dso,fd,dsize,ET_DYN,pe,ph,ps)
+#define elf_load_program(dso,fd,dsize,pe,ph,ps)	elf_load_object(dso,fd,dsize,ET_EXEC,pe,ph,ps)
+
 
 char **strarr_dup(const char **sarray);
 void strarr_free(char **sarray);
 int strarr_contains(const char **sarray, const char *findstr);
 
+int elf_load_object(const char *dsopath, int *fd, size_t *dsize, int etype,
+	Elf64_Ehdr **pehdr, Elf64_Phdr **pphdr, Elf64_Shdr **pshdr);
 
 jmp_buf jb;
 void *last_copy_start, *last_copy_end;
@@ -598,8 +603,8 @@ get_local_vma(unsigned long base, size_t size, int prot, void *fixed) {
 }
 
 int
-elf_load_library(const char *dsopath, int *fd, size_t *dsize, Elf64_Ehdr **pehdr,
-		Elf64_Phdr **pphdr, Elf64_Shdr **pshdr) {
+elf_load_object(const char *dsopath, int *fd, size_t *dsize, int etype,
+		Elf64_Ehdr **pehdr, Elf64_Phdr **pphdr, Elf64_Shdr **pshdr) {
 	struct stat sb;
 	unsigned char *bindata;
 
@@ -639,8 +644,8 @@ elf_load_library(const char *dsopath, int *fd, size_t *dsize, Elf64_Ehdr **pehdr
 	} else if ((*pehdr)->e_ident[EI_VERSION] != EV_CURRENT) {
 		PRINT_ERROR("File \"%s\" contained unexpected ELF header version!\n", dsopath);
 		goto errout;
-	} else if ((*pehdr)->e_type != ET_DYN) {
-		PRINT_ERROR("File \"%s\" was not an ELF dynamic object!\n", dsopath);
+	} else if ((*pehdr)->e_type != etype) {
+		PRINT_ERROR("File \"%s\" did not match expected ELF object type!\n", dsopath);
 		goto errout;
 	} else if ((*pehdr)->e_machine != EM_X86_64) {
 		PRINT_ERROR("File \"%s\" was not for a supported architecture (X86_64)!\n", dsopath);
@@ -908,6 +913,337 @@ get_all_so_needed(const char *dsopath, char **curdeps) {
 out:
 	munmap(ehdr, fsize);
 	close(fd);
+	return result;
+}
+
+size_t
+elf_read_vaddr(unsigned char *bindata, Elf64_Ehdr *ehdr, Elf64_Phdr *phdr, void *base_addr, size_t reqsize) {
+	size_t offset = 0;
+
+	while (phdr->p_type != PT_NULL) {
+		size_t file_offset;
+
+		if (phdr->p_type != PT_LOAD) {
+			phdr++;
+			continue;
+		}
+
+		if (!((base_addr >= (void *)phdr->p_vaddr) && (base_addr <= (void *)phdr->p_vaddr+phdr->p_memsz))) {
+			phdr++;
+			continue;
+		}
+
+		// XXX: check to see if reqsize exceeds bounds.
+
+//		PRINT_ERROR("PROGRAM HDR: %p -> %p (%lu)\n", (void *)phdr->p_vaddr, (void *)phdr->p_vaddr+phdr->p_memsz, phdr->p_memsz);
+		file_offset = phdr->p_offset + (unsigned long)base_addr - phdr->p_vaddr;
+		return file_offset;
+	}
+
+	return offset;
+}
+
+/*
+type _func struct {
+        entry   uintptr // start pc
+        nameoff int32   // function name
+
+        args int32 // in/out args size
+        _    int32 // previously legacy frame size; kept for layout compatibility
+
+        pcsp      int32
+        pcfile    int32
+        pcln      int32
+        npcdata   int32
+        nfuncdata int32
+}
+*/
+
+typedef struct __attribute__((packed)) {
+	void *entry;
+	uint32_t nameoff;
+	uint32_t args;
+	uint32_t legacy;
+	uint32_t pcsp;
+	uint32_t pcfile;
+	uint32_t pcln;
+	uint32_t npcdata;
+	uint32_t nfuncdata;
+} _func_t;
+
+/*
+type moduledata struct {
+        pclntable    []byte
+        ftab         []functab
+        filetab      []uint32
+        findfunctab  uintptr
+        minpc, maxpc uintptr
+
+        text, etext           uintptr
+        noptrdata, enoptrdata uintptr
+        data, edata           uintptr
+        bss, ebss             uintptr
+        noptrbss, enoptrbss   uintptr
+        end, gcdata, gcbss    uintptr
+
+        typelinks []*_type
+
+        modulename   string
+        modulehashes []modulehash
+
+        gcdatamask, gcbssmask bitvector
+
+        next *moduledata
+}*/
+
+/*
+type slice struct {
+	array unsafe.Pointer
+	len   int
+	cap   int
+}*/
+
+#define SLICE_SZ_W	3
+#define STRING_SZ_W	2
+#define SL_IND_PTR	0
+#define SL_IND_SZ	1
+
+typedef struct __attribute__((packed)) {
+	unsigned long pclntable[SLICE_SZ_W];
+	unsigned long ftab[SLICE_SZ_W];
+	unsigned long filetab[SLICE_SZ_W];
+	void *findfunctab;
+	void *minpc, *maxpc;
+	void *text, *etext;
+	void *noptrdata, *enoptrdata;
+	void *data, *edata;
+	void *bss, *ebss;
+	void *noptrbss, *enoptrbss;
+	void *end, *gcdata, *gcbss;
+	unsigned long typelinks[SLICE_SZ_W];
+	unsigned long modulename[STRING_SZ_W];
+	unsigned long modulehashes[SLICE_SZ_W];
+} moduledata_t ;
+
+/*
+type findfuncbucket struct {
+	idx        uint32
+	subbuckets [16]byte
+}
+*/
+
+typedef struct __attribute__((packed)) {
+	uint32_t idx;
+	unsigned char subbuckets[16];
+} findfuncbucket_t;
+
+/*func readvarint(p []byte) (newp []byte, val uint32) {
+        var v, shift uint32
+        for {
+                b := p[0]
+                p = p[1:]
+                v |= (uint32(b) & 0x7F) << shift
+                if b&0x80 == 0 {
+                        break
+                }
+                shift += 7
+        }
+        return p, v
+}*/
+
+uint32_t readvarint(void *ptr, void **pnext) {
+	unsigned char *bptr, *p;
+	uint32_t v = 0, shift = 0;
+
+	p = bptr = (unsigned char *)ptr;
+
+	while (1) {
+		unsigned char b;
+
+		b = p[0];
+		p++;
+		v |= ((uint32_t)b & 0x7f) << shift;
+
+		if (!(b & 0x80))
+			break;
+
+		shift += 7;
+	}
+
+	*pnext = p;
+	return v;
+}
+
+int
+get_pcdata(const char *dsopath, void *base_addr, symbol_mapping_t *symmap, size_t mapsize) {
+	Elf64_Ehdr *ehdr;
+	Elf64_Phdr *phdr;
+	Elf64_Shdr *shdr;
+	moduledata_t md;
+	unsigned char *bindata;
+	unsigned long preamble[10];
+	unsigned long pclntab_addr, filetab_addr, strtab_addr;
+	unsigned long functab_off, pclntab_off, filetab_off, strtab_off, findfunctab_off;
+	size_t fsize, i, file_offset, fntab_size, filetab_size;
+	int fd, result = -1;
+
+	if (elf_load_program(dsopath, &fd, &fsize, &ehdr, &phdr, &shdr) < 0) {
+		PRINT_ERROR("%s", "Error looking up PCDATA table\n");
+		return -1;
+	}
+
+	bindata = (unsigned char *)ehdr;
+
+	if (!(file_offset = elf_read_vaddr(bindata, ehdr, phdr, base_addr, 0))) {
+		PRINT_ERROR("Error reading program firstmoduledata at virtual address: %p\n", base_addr);
+		goto out;
+	}
+
+	memcpy(&md, bindata + file_offset, sizeof(md));
+	memcpy(&preamble, &md, sizeof(preamble));
+	pclntab_addr = md.pclntable[SL_IND_PTR];
+	fntab_size = md.ftab[SL_IND_SZ];
+	filetab_addr = md.filetab[SL_IND_PTR];
+	filetab_size = md.filetab[SL_IND_SZ];
+	strtab_addr = filetab_addr + (filetab_size * sizeof(uint32_t));
+
+	if (!(functab_off = elf_read_vaddr(bindata, ehdr, phdr, (void *)preamble[3], fntab_size))) {
+		PRINT_ERROR("Error reading program functab at virtual address: %p\n", (void *)preamble[3]);
+		goto out;
+	}
+
+	if (!(pclntab_off = elf_read_vaddr(bindata, ehdr, phdr, (void *)pclntab_addr, 0))) {
+		PRINT_ERROR("Error reading program pclntab at virtual address: %p\n", (void *)pclntab_addr);
+		goto out;
+	}
+
+	if (!(filetab_off = elf_read_vaddr(bindata, ehdr, phdr, (void *)filetab_addr, 0))) {
+		PRINT_ERROR("Error reading program filetab at virtual address: %p\n", (void *)filetab_addr);
+		goto out;
+	}
+
+	if (!(strtab_off = elf_read_vaddr(bindata, ehdr, phdr, (void *)strtab_addr, 0))) {
+		PRINT_ERROR("Error reading program strtab at virtual address: %p\n", (void *)strtab_addr);
+		goto out;
+	}
+
+	if (!(findfunctab_off = elf_read_vaddr(bindata, ehdr, phdr, md.findfunctab, 0))) {
+		PRINT_ERROR("Error reading program findfunctab at virtual address: %p\n", md.findfunctab);
+		goto out;
+	}
+
+//	PRINT_ERROR("Found a total of %zu entries in fntab\n", fntab_size);
+
+	memcpy(&preamble, bindata + functab_off, sizeof(preamble));
+
+/*	type functab struct {
+		entry   uintptr
+		funcoff uintptr
+	}*/
+
+	for (i = 0; i < fntab_size; i++) {
+		_func_t *fptr;
+		unsigned char *funcptr;
+		unsigned long *tabentry;
+		size_t j;
+
+		tabentry = (unsigned long *)(bindata + functab_off + (i * sizeof(void *) * 2));
+//		fprintf(stderr, "%zu: %p | %p\n", i, (void *)tabentry[0], (void *)tabentry[1]);
+
+		for (j = 0; j < mapsize; j++) {
+			if (symmap[j].addr == tabentry[0])
+				break;
+		}
+
+		if (j == mapsize) {
+			PRINT_ERROR("Warning: found pctab entry for PC value %p but could not map it to a symbol!\n",
+				(void *)tabentry[0]);
+//			continue;
+		}
+
+		funcptr = (unsigned char *)bindata + pclntab_off + tabentry[1];
+		fptr = (_func_t *)funcptr;
+
+		if (fptr->entry != (void *)tabentry[0]) {
+			PRINT_ERROR("Warning: mismatched function entry (expected %p; got %p)\n",
+				(void *)tabentry[0], fptr->entry);
+		} else {
+//			fprintf(stderr, "Value at offset (%lu): %p; nameoff = %u, args = %u, legacy = %x, pcfile = %x/%u (0x%lx), pcln = %x/%u (0x%lx), npcdata = %u, nfuncdata = %u / [%s]\n",
+//				tabentry[1], fptr->entry, fptr->nameoff, fptr->args, fptr->legacy, fptr->pcfile, fptr->pcfile, pclntab_addr+fptr->pcfile, fptr->pcln, fptr->pcln, pclntab_addr+fptr->pcln, fptr->npcdata, fptr->nfuncdata,
+//				(bindata + pclntab_off + fptr->nameoff));
+			symmap[j].argsize = fptr->args;
+
+			void *nextf, *nextl, *pfile, *pln;
+			uint32_t ifile, iln;
+			pfile = bindata + pclntab_off + fptr->pcfile;
+			pln = bindata + pclntab_off + fptr->pcln;
+			ifile = readvarint(pfile, &nextf);
+			iln = readvarint(pln, &nextl);
+			uint32_t find = (ifile / 2) - 1;
+			uint32_t *ftp;
+
+			ftp = (uint32_t *)(bindata + filetab_off + (find * sizeof(uint32_t)));
+//			fprintf(stderr, "----------- OK: %s: file: %p, %u / line: %p, %u\n", (bindata + pclntab_off + fptr->nameoff), nextf, ifile, nextl, iln);
+
+			if (fptr->pcfile && fptr->pcln) {
+				char *fname, *fname_short;
+
+#define FNAME_TRUNC_MARKER	"/src/"
+				fname = (char *)(bindata + pclntab_off + *ftp);
+				fname_short = strstr(fname, FNAME_TRUNC_MARKER);
+
+				if (!fname_short)
+					fname_short = fname;
+				else
+					fname_short += strlen(FNAME_TRUNC_MARKER);
+
+//				fprintf(stderr, "----------- OK: %s: file: %u / line: %u / %s\n",
+//					(bindata + pclntab_off + fptr->nameoff), find, iln, fname);
+
+				// XXX: this is a lot of unnecessary duplication... should be fixed.
+				symmap[j].fname = strdup(fname_short);
+				symmap[j].lineno = iln;
+			}
+
+		}
+
+	}
+
+/*
+	for (i = 0; i < filetab_size; i++) {
+		uint32_t *ftp = (uint32_t *)(bindata + filetab_off + (i * sizeof(uint32_t)));
+		fprintf(stderr, "XXX filetab %zu: %x (%u) / %s\n", i, *ftp, *ftp, (bindata + pclntab_off + *ftp));
+	}
+
+	size_t nbuckets = ((unsigned long)md.etext + 4095 - (unsigned long)md.text) / 4096;
+//	fprintf(stderr, "start of strtab = %s\n", (bindata + strtab_off));
+//	fprintf(stderr, "md text from %p <-> %p (%lu bytes)\n", md.text, md.etext, (unsigned long)md.etext-(unsigned long)md.text);
+//	fprintf(stderr, "nbuckets = %zu\n", nbuckets);
+
+	for (i = 0; i < nbuckets; i++) {
+//		findfuncbucket_t *fb = (findfuncbucket_t *)(bindata + findfunctab_off + (i * sizeof(findfuncbucket_t)));
+		unsigned long pc_start, pc_end;
+
+		pc_start = (unsigned long)md.text + (i * 4096);
+		pc_end = pc_start + 4096;
+
+		if (pc_end > (unsigned long)md.maxpc)
+			pc_end = (unsigned long)md.maxpc;
+
+		pc_start -= (unsigned long)md.minpc;
+		pc_end -= (unsigned long)md.minpc;
+//		PRINT_ERROR("XXX bucket %zu: %u: %lx <-> %lx\n", i, fb->idx, pc_start, pc_end);
+	}
+
+//	fprintf(stderr, "minpc = %p, maxpc = %p\n", md.minpc, md.maxpc);
+*/
+
+	result = 0;
+
+out:
+	munmap(bindata, fsize);
+	close(fd);
+
 	return result;
 }
 
