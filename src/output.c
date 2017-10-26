@@ -172,7 +172,7 @@ buffer_output_data(pid_t tid, const char *output, int nest_level, int do_prefix)
 		outbuf = xrealloc(tb->buf, nlen);
 
 	if (!outbuf) {
-		PRINT_ERROR("%s", "Error: unable to allocate memory for output buffer");
+		PRINT_ERROR("%s", "Error: unable to allocate memory for output buffer\n");
 		return;
 	}
 

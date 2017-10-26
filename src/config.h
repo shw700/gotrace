@@ -286,6 +286,7 @@ void perror_pid(const char *msg, pid_t pid);
 pid_t gettid(void);
 void *map_closest_area(void *refaddr, size_t msize);
 size_t make_jmp_buf(unsigned long from, unsigned long to, void *buf, size_t buflen);
+//void backtrace_unwind(void *uc);
 
 /* arch specific */
 char *read_string_remote(pid_t pid, char *addr, size_t slen);
@@ -293,7 +294,7 @@ char *read_string_remote(pid_t pid, char *addr, size_t slen);
 /* remote dynamic linker */
 char **get_all_so_needed(const char *dsopath, char **curdeps);
 int open_dso_and_get_segments(const char *soname, pid_t pid, void **pinit_func, void **reloc_base, int open_all);
-void *get_entry_point(const char *dsopath);
+void *get_entry_point(const char *dsopath, void ***init_arr);
 int get_pcdata(const char *dsopath, void *base_add, symbol_mapping_t *symmap, size_t mapsize);
 unsigned long call_remote_syscall(pid_t pid, int syscall_no, unsigned long r1,
 	unsigned long r2, unsigned long r3, unsigned long r4, unsigned long r5, unsigned long r6);
@@ -304,6 +305,7 @@ uintptr_t call_remote_lib_func(pid_t pid, void *faddr, uintptr_t r1, uintptr_t r
 	uintptr_t r4, uintptr_t r5, uintptr_t r6, int allow_event);
 unsigned long get_fs_base_remote(pid_t pid);
 int replicate_process_remotely(pid_t pid, int **shmids);
+void *resolve_local_symbol(const char *libpath, const char *funcname);
 
 
 void dump_wait_state(pid_t pid, int status, int force);
@@ -422,6 +424,7 @@ typedef struct __attribute__((packed)) gomod_data_hdr {
 
 
 #define GOMOD_LIB_NAME		"libgomod.so."CONFIG_VERSION
+#define GOMOD_PRINTLIB_NAME	"gomod_printlib.a"
 #define GOMOD_INIT_FUNC		"_gomod_init"
 
 #define MAX_STRING_ALLOC_SIZE	8192

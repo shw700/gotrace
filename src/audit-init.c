@@ -162,7 +162,7 @@ int init_custom_handlers(struct lt_config_audit *cfg)
 	int ret;
 
 	if (setup_user_data_handlers() < 0) {
-		PRINT_ERROR("%s", "Unexpected error setting up function transformers table");
+		PRINT_ERROR("%s", "Unexpected error setting up function transformers table\n");
 		return -1;
 	}
 
@@ -239,11 +239,11 @@ int init_custom_handlers(struct lt_config_audit *cfg)
 		}
 
 		if (!symtab) {
-			PRINT_ERROR("Error: could not determine address of symbol table for transformer library %s", lpath);
+			PRINT_ERROR("Error: could not determine address of symbol table for transformer library %s\n", lpath);
 			dlclose(handle);
 			continue;
 		} else if (!strtab) {
-			PRINT_ERROR("Error: could not determine address of string table for transformer library %s", lpath);
+			PRINT_ERROR("Error: could not determine address of string table for transformer library %s\n", lpath);
 			dlclose(handle);
 			continue;
 		}

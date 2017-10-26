@@ -991,7 +991,7 @@ int lt_stack_process_ret(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 		pval = get_value(cfg, arg, target, regs, ret_offset, &psize, &ret_offset, &is_err);
 
 /*		if (is_err) {
-			PRINT_ERROR("Unexpected error occurred decoding return value from function!");
+			PRINT_ERROR("Unexpected error occurred decoding return value from function!\n");
 			return -1;
 		} */
 

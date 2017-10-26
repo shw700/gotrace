@@ -40,6 +40,19 @@ typedef struct landing_pad {
 landing_pad_t *landing_pads = NULL;
 
 
+void
+sig_handler(int signo, siginfo_t *si, void *ucontext) {
+	fprintf(stderr, "gotrace module received signal: %d\n", signo);
+
+	if (signo == SIGSEGV) {
+		PRINT_ERROR("%s", "Error: caught SIGSEGV!\n");
+//		backtrace_unwind(ucontext);
+	}
+
+	_exit(0);
+}
+
+
 int
 call_mallocinit() {
 	static jmp_buf j;
@@ -419,8 +432,7 @@ client_socket_loop(void *arg) {
 				PRINT_ERROR("Loop encountered unexpected error serializing type data: %s\n", fname);
 				free(dbuf);
 				break;
-			} else {*/
-			if (1==1) {
+			} else */{
 				char sbuf[128];
 
 				snprintf(sbuf, sizeof(sbuf), "___%s(%p)___", fname, (void *)*fdata);
@@ -449,12 +461,24 @@ client_socket_loop(void *arg) {
 
 int _gomod_init(void)
 {
+	struct sigaction sa;
 	struct sockaddr_un s_un;
 	socklen_t ssize;
 	char *gotrace_socket_path = NULL;
 	int fd;
 
 	fprintf(stderr, "Loop outer (%d)\n", gettid());
+
+
+	memset(&sa, 0, sizeof(struct sigaction));
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = 0;
+	sa.sa_sigaction = sig_handler;
+	sa.sa_flags |= SA_SIGINFO;
+
+	if (sigaction(SIGSEGV, &sa, NULL) == -1)
+		PERROR("sigaction");
+
 
 //	char *rx = call_golang_func_str((void *)0x000000000402100, (void *)0xc0debabe);
 //	fprintf(stderr, "Loop result heh = %p\n", rx);
@@ -494,7 +518,7 @@ int _gomod_init(void)
 
 	fprintf(stderr, "Loading...\n");
 
-#define NEW_STACK_SIZE 65536
+#define NEW_STACK_SIZE (65536*2)
 	char *stack;
 	int cpid, cflags = CLONE_FILES | CLONE_FS | CLONE_IO | CLONE_VM;
 

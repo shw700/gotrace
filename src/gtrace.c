@@ -240,6 +240,10 @@ cleanup(void) {
 	}
 
 	fprintf(stderr, "%zu destroyed.\n", ndestroyed);
+
+	if (master_pid > 0)
+		kill(master_pid, SIGKILL);
+
 	return;
 }
 
@@ -247,6 +251,10 @@ void
 handle_int(int signo) {
 	if (signo == SIGINT) {
 		fprintf(stderr, "Caught SIGINT... shutting down gracefully.\n");
+
+		if (master_pid > 0)
+			kill(master_pid, SIGINT);
+
 		exit(EXIT_SUCCESS);
 	}
 
@@ -1425,6 +1433,20 @@ dump_instruction_state(pid_t pid) {
 		print_instruction(pid, (void *)regs.rip, 16);
 		r_addr = dladdr((void *)si.si_addr, &ainfo) != 0;
 		r_pc = dladdr((void *)regs.rip, &iinfo) != 0;
+
+		if (si.si_signo == SIGSEGV) {
+//			ptrace(PTRACE_SETOPTIONS, pid, NULL, 0);
+			if (kill(pid, si.si_signo) == -1)
+				perror_pid("kill", pid);
+
+			if (ptrace(PTRACE_CONT, pid, 0, 0) == -1)
+				perror_pid("ptrace(PTRACE_CONT)", pid);
+
+			if (ptrace(PTRACE_DETACH, pid, NULL, NULL) == -1)
+				perror_pid("ptrace(PTRACE_DETACH)", pid);
+
+		}
+
 	}
 
 	if (r_addr || r_pc) {
@@ -1472,6 +1494,69 @@ set_fs_base_remote(pid_t pid, unsigned long base) {
 
 	return 0;
 }
+
+/*
+ * Call any initialization routines that can be found for a given library
+ * in a remote process.
+ * If cont_on_err is set, an init return of -1 will not cause an early return.
+ */
+int
+initialize_remote_library(pid_t pid, const char *libpath, int cont_on_err) {
+	struct link_map *lm;
+	void *hnd, *entry, **ia, **iaptr;
+	size_t ino = 0;
+	int rres;
+
+	entry = get_entry_point(libpath, &ia);
+	fprintf(stderr, "Entry point for %s: %p\n", libpath, entry);
+
+	if ((hnd = dlopen(libpath, RTLD_NOW|RTLD_NOLOAD|RTLD_NODELETE)) == NULL) {
+		PRINT_ERROR("dlopen(%s): %s\n", libpath, dlerror());
+		return -1;
+	}
+
+	if (dlinfo(hnd, RTLD_DI_LINKMAP, &lm) == -1) {
+		PRINT_ERROR("dlinfo(%s): %s\n", libpath, dlerror());
+		return -1;
+	}
+
+	if (dlclose(hnd) != 0)
+		PRINT_ERROR("dlclose(%s): %s\n", libpath, dlerror());
+
+	if (entry) {
+		entry += lm->l_addr;
+
+		PRINT_ERROR("About to call entry point for %s: %p\n", libpath, entry);
+
+		if ((rres = call_remote_lib_func(pid, entry, 0, 0, 0, 0, 0, 0, PTRACE_EVENT_CLONE)) == -1) {
+			PRINT_ERROR("Error in remote library initialization of %s: %x\n", libpath, rres);
+
+			if (!cont_on_err)
+				return -1;
+		}
+
+	}
+
+	iaptr = ia;
+
+	while (*iaptr) {
+		ino++;
+		*iaptr += lm->l_addr;
+		PRINT_ERROR("About to call init array func #%zu for %s: %p\n", ino, libpath, *iaptr);
+
+		if ((rres = call_remote_lib_func(pid, *iaptr, 0, 0, 0, 0, 0, 0, PTRACE_EVENT_CLONE)) == -1) {
+			PRINT_ERROR("Error in remote library initialization of %s: %x\n", libpath, rres);
+
+			if (!cont_on_err)
+				return -1;
+		}
+
+		iaptr++;
+	}
+
+	return rres;
+}
+
 
 #define MAX_RETRIES	3
 
@@ -1542,7 +1627,7 @@ trace_program(const char *progname, char * const *args) {
 		default: {
 			struct user_regs_struct regs;
 //			char **needed;
-			void *dlhandle, *initfunc = NULL; //, *reloc_base = NULL;
+			void *dlhandle, *initfunc = NULL;
 			char libpath[512] = { 0 };
 			signed long our_fs, old_fs;
 			int pres;
@@ -1579,9 +1664,14 @@ trace_program(const char *progname, char * const *args) {
 			}
 
 			if ((dlhandle = dlopen(libpath, RTLD_NOW|RTLD_DEEPBIND)) == NULL) {
-				PRINT_ERROR("dlopen(): %s", dlerror());
+				PRINT_ERROR("dlopen(): %s\n", dlerror());
 				exit(EXIT_FAILURE);
 			}
+
+
+
+
+
 
 //			res = call_remote_syscall(pid, SYS_arch_prctl, ARCH_SET_FS, fs_addr+32767, 0, 0, 0, 0);
 #define arch_prctl(code,addr)	syscall(SYS_arch_prctl, code, addr)
@@ -1646,6 +1736,27 @@ trace_program(const char *progname, char * const *args) {
 				exit(EXIT_FAILURE);
 			}*/
 
+
+
+/*			fprintf(stderr, "Calling remote libc initialization...\n");
+			fprintf(stderr, "result = %d\n", initialize_remote_library(pid, "/lib/x86_64-linux-gnu/libc.so.6", 1));
+			fprintf(stderr, "Remote libc initialization returned.\n");
+
+			fprintf(stderr, "Calling remote libpthread initialization...\n");
+			fprintf(stderr, "result = %d\n", initialize_remote_library(pid, "/lib/x86_64-linux-gnu/libpthread.so.0", 1));
+			fprintf(stderr, "Remote libpthread initialization returned.\n");
+
+
+			fprintf(stderr, "Calling remote initialization of %s...\n", GOMOD_PRINTLIB_NAME);
+			fprintf(stderr, "result = %d\n", initialize_remote_library(pid, GOMOD_PRINTLIB_NAME, 1));
+			fprintf(stderr, "Remote %s initialization returned.\n", GOMOD_PRINTLIB_NAME);
+*/
+
+
+
+
+
+
 			start_listener();
 
 			if (!(initfunc = dlsym(dlhandle, GOMOD_INIT_FUNC))) {
@@ -1679,6 +1790,18 @@ trace_program(const char *progname, char * const *args) {
 					PRINT_ERROR("%s", "DID NOT fail again\n");
 
 			}
+
+
+
+/*			void *_cgo_sys_thread_create_addr = NULL;
+			_cgo_sys_thread_create_addr = resolve_local_symbol(GOMOD_PRINTLIB_NAME, "_cgo_sys_thread_create");
+			fprintf(stderr, "_cgo_sys_thread_create = %p\n", _cgo_sys_thread_create_addr);
+
+			if (ptrace(PTRACE_POKETEXT, pres, _cgo_sys_thread_create_addr, (void *)0xdeadbeef) == -1)
+				perror_pid("ptrace(PTRACE_POKETEXT)", pres);
+*/
+
+
 
 			if (set_fs_base_remote(pid, old_fs) < 0) {
 				PRINT_ERROR("%s", "Error restoring original thread block in remote process\n");

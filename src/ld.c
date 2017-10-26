@@ -1247,15 +1247,25 @@ out:
 	return result;
 }
 
+/*
+ * If an entry point can be found in the shared library's dynamic section,
+ * return it as the result - or NULL otherwise.
+ *
+ * init_arr is an optional pointer that will will receive an allocated
+ * array of initialization pointers as specified by the INIT_ARRAY section,
+ * if it exists and is populated with non-NULL pointers.
+ * The final entry in this returned list is NULL. The caller must deallocate.
+ */
 void *
-get_entry_point(const char *dsopath) {
+get_entry_point(const char *dsopath, void ***init_arr) {
 	Elf64_Ehdr *ehdr;
 	Elf64_Phdr *phdr;
 	Elf64_Shdr *shdr;
 	Elf64_Dyn *dyn = NULL;
 	void *result = NULL;
 	unsigned char *bindata;
-	size_t fsize, i;
+	unsigned long init_array_vaddr = 0;
+	size_t fsize, i, j, nfuncs = 0;
 	int fd;
 
 	dsopath = get_library_abs_path(dsopath);
@@ -1270,26 +1280,7 @@ get_entry_point(const char *dsopath) {
 	for (i = 0; i < ehdr->e_shnum; i++) {
 		if (shdr[i].sh_type == SHT_DYNAMIC) {
 			dyn = (Elf64_Dyn *)(bindata + shdr[i].sh_offset);
-		} else if ((shdr[i].sh_type == SHT_INIT_ARRAY) || (shdr[i].sh_type == SHT_FINI_ARRAY)) {
-			unsigned long *funcptr;
-			size_t nfunc;
-
-			if (shdr[i].sh_size % sizeof(void *)) {
-				PRINT_ERROR("Section advertised improperly aligned size: %lu\n", shdr[i].sh_size);
-				continue;
-			}
-
-			nfunc = shdr[i].sh_size / sizeof(void *);
-			
-			PRINT_ERROR("LOCATED INITS: %s / %zu entries\n", (shdr[i].sh_type == SHT_INIT_ARRAY) ? "init" : "fini", nfunc);
-			PRINT_ERROR("   addr = %lx, off = %lx, size = %lu\n", shdr[i].sh_addr, shdr[i].sh_offset, shdr[i].sh_size);
-
-			funcptr = (unsigned long *)(bindata + shdr[i].sh_offset);
-			PRINT_ERROR("   + func1 = %p\n", (void *)*funcptr);
-
-			if (shdr[i].sh_type == SHT_INIT_ARRAY)
-				result = (void *)*funcptr;
-
+			break;
 		}
 
 	}
@@ -1302,23 +1293,50 @@ get_entry_point(const char *dsopath) {
 	while (dyn->d_tag != DT_NULL) {
 		switch(dyn->d_tag) {
 			case DT_INIT:
-//			case DT_FINI:
-//			case DT_INIT_ARRAY:
-//			case DT_FINI_ARRAY:
-//			case DT_INIT_ARRAYSZ:
-//			case DT_FINI_ARRAYSZ:
+				result = (void *)dyn->d_un.d_val;
+				break;
+			case DT_INIT_ARRAY:
+				init_array_vaddr = dyn->d_un.d_val;
+				break;
+			case DT_INIT_ARRAYSZ:
+
+				if (dyn->d_un.d_val % sizeof(void *))
+					PRINT_ERROR("Section advertised improperly aligned size: %lu\n", shdr[i].sh_size);
+				else
+					nfuncs = dyn->d_un.d_val / sizeof(void *);
+
 				break;
 			default:
-				dyn++;
-				continue;
 				break;
 		}
 
-		fprintf(stderr, "DYNAMIC (%s): %lu -> 0x%lx\n", dsopath, dyn->d_tag, dyn->d_un.d_val);
-		result = (void *)dyn->d_un.d_val;
-		break;
+//		fprintf(stderr, "XXX DYNAMIC section (%s): %lu -> 0x%lx\n", dsopath, dyn->d_tag, dyn->d_un.d_val);
+		dyn++;
 	}
 
+	if (init_arr && nfuncs && init_array_vaddr) {
+		unsigned long ia_off, *funcptr;
+
+		if (!(ia_off = elf_read_vaddr(bindata, ehdr, phdr, (void *)init_array_vaddr, (nfuncs * sizeof(void *)))))
+			PRINT_ERROR("Error reading contents of INIT_ARRAY at virtual address: %p\n", (void *)init_array_vaddr);
+		else {
+			if (!(*init_arr = malloc(sizeof(void *) * (nfuncs+1)))) {
+				PERROR("malloc");
+				result = NULL;
+				goto out;
+			}
+
+			memset(*init_arr, 0, sizeof(void *) * (nfuncs + 1));
+			funcptr = (unsigned long *)(bindata + ia_off);
+
+			for (i = 0, j = 0; i < nfuncs; i++) {
+				if (funcptr[i])
+					(*init_arr)[j++] = (void *)funcptr[i];
+			}
+
+		}
+
+	}
 
 out:
 	munmap(bindata, fsize);
@@ -1862,4 +1880,91 @@ check_vma_collision(pid_t pid1, pid_t pid2, int exclude_vsyscall, int exclude_se
 	DESTROY_VMAP(vr1, MAX_REPLICATE_VMA);
 	DESTROY_VMAP(vr2, MAX_REPLICATE_VMA);
 	return ret;
+}
+
+/*
+ * Resolve a symbol in a shared object that has local scope visibility,
+ * since rtld won't do this for us.
+ * Also, assume that the specified target library has already been
+ * loaded and memory. Use this preexisting library handle to calculate
+ * the relocated virtual memory address of the symbol, which is
+ * returned as the result.
+ */
+void *
+resolve_local_symbol(const char *libpath, const char *funcname) {
+	struct link_map *lm;
+	void *hnd, *result = NULL;
+	Elf64_Ehdr *ehdr;
+	Elf64_Phdr *phdr;
+	Elf64_Shdr *shdr;
+	Elf64_Sym *symtab = NULL;
+	unsigned char *bindata;
+	char *strtab = NULL;
+	size_t fsize, i, strtab_size = 0, symtab_size;
+	int fd;
+
+	if ((hnd = dlopen(libpath, RTLD_NOW|RTLD_NOLOAD|RTLD_NODELETE)) == NULL) {
+		PRINT_ERROR("dlopen(%s): %s\n", libpath, dlerror());
+		return NULL;
+	}
+
+	if (dlinfo(hnd, RTLD_DI_LINKMAP, &lm) == -1) {
+		PRINT_ERROR("dlinfo(%s): %s\n", libpath, dlerror());
+		return NULL;
+	}
+
+	if (dlclose(hnd) != 0)
+		PRINT_ERROR("dlclose(%s): %s\n", libpath, dlerror());
+
+       if (elf_load_library(libpath, &fd, &fsize, &ehdr, &phdr, &shdr) < 0) {
+                PRINT_ERROR("%s", "Error looking up shared object dependencies\n");
+                return NULL;
+        }
+
+        bindata = (unsigned char *)ehdr;
+
+        for (i = 0; i < ehdr->e_shnum; i++) {
+
+		if (shdr[i].sh_type == SHT_STRTAB) {
+
+			printf("STRTAB: %zu, flags = %lu, link = %u, info = %u\n", shdr[i].sh_size, shdr[i].sh_flags, shdr[i].sh_link, shdr[i].sh_info);
+			if (shdr[i].sh_size > strtab_size) {
+				strtab = (char *)(bindata + shdr[i].sh_offset);
+				strtab_size = shdr[i].sh_size;
+			}
+
+		} else if (shdr[i].sh_type == SHT_SYMTAB) {
+			symtab = (Elf64_Sym *)(bindata + shdr[i].sh_offset);
+			symtab_size = shdr[i].sh_size;
+		}
+
+	}
+
+	if (!symtab) {
+		PRINT_ERROR("Error: could not find symbol table in DSO: %s\n", libpath);
+		goto out;
+	} else if (!strtab) {
+		PRINT_ERROR("Error: could not find string table in DSO: %s\n", libpath);
+		goto out;
+	} else if (!strtab_size) {
+		PRINT_ERROR("Error: could not determine string table size in DSO: %s\n", libpath);
+		goto out;
+	}
+
+	for (i = 0; i < symtab_size/sizeof(Elf64_Sym); i++) {
+
+		if (!strcmp((strtab + symtab[i].st_name), funcname)) {
+			result = (void *)symtab[i].st_value;
+			break;
+		}
+
+	}
+
+	if (result)
+		result += lm->l_addr;
+
+out:
+	munmap(ehdr, fsize);
+	close(fd);
+	return result;
 }
