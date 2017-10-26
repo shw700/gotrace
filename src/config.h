@@ -33,6 +33,7 @@
 #include <sys/mman.h>
 #include <errno.h>
 #include <sys/user.h>
+#include <sys/ptrace.h>
 
 #include "list.h"
 #include "elfh.h"
@@ -305,11 +306,12 @@ uintptr_t call_remote_lib_func(pid_t pid, void *faddr, uintptr_t r1, uintptr_t r
 	uintptr_t r4, uintptr_t r5, uintptr_t r6, int allow_event);
 unsigned long get_fs_base_remote(pid_t pid);
 int replicate_process_remotely(pid_t pid, int **shmids);
+void *replicate_environ(pid_t pid);
 void *resolve_local_symbol(const char *libpath, const char *funcname);
 
 
 void dump_wait_state(pid_t pid, int status, int force);
-void dump_instruction_state(pid_t pid);
+int dump_instruction_state(pid_t pid);
 char *read_bytes_remote(pid_t pid, char *addr, size_t slen);
 int write_bytes_remote(pid_t pid, void *addr, void *buf, size_t blen);
 int check_vma_collision(pid_t pid1, pid_t pid2, int exclude_vsyscall, int exclude_self);
@@ -359,6 +361,8 @@ do { \
 #define BOLDCYAN    "\033[1m\033[36m"    /* Bold Cyan */
 #define BOLDWHITE   "\033[1m\033[37m"    /* Bold White */
 
+
+
 #define PRINT_COLOR(color, fmt, ...)	fprintf(stderr, color fmt RESET, __VA_ARGS__)
 //#define PRINT_ERROR(fmt, ...)		PRINT_COLOR(BOLDRED, fmt, __VA_ARGS__)
 #define PRINT_ERROR	PRINT_ERROR_SAFE
@@ -386,6 +390,82 @@ do { \
 							fsync(STDERR_FILENO);	\
 						}	\
 					} while (0)
+
+#define PT_RETERROR	0
+#define PT_FATAL	1
+#define PT_DONTFAIL	2
+
+static inline char *
+ptrace_req_to_name(long request) {
+	switch(request) {
+		case PTRACE_TRACEME: return "PTRACE_TRACME"; break;
+		case PTRACE_PEEKTEXT: return "PTRACE_PEEKTEXT"; break;
+		case PTRACE_PEEKDATA: return "PTRACE_PEEKDATA"; break;
+		case PTRACE_POKETEXT: return "PTRACE_POKETEXT"; break;
+		case PTRACE_POKEDATA: return "PTRACE_POKEDATA"; break;
+		case PTRACE_CONT: return "PTRACE_CONT"; break;
+		case PTRACE_KILL: return "PTRACE_KILL"; break;
+		case PTRACE_SINGLESTEP: return "PTRACE_SINGLESTEP"; break;
+		case PTRACE_ATTACH: return "PTRACE_ATTACH"; break;
+		case PTRACE_DETACH: return "PTRACE_DETACH"; break;
+		case PTRACE_SYSCALL: return "PTRACE_SYSCALL"; break;
+		case PTRACE_SETOPTIONS: return "PTRACE_SETOPTIONS"; break;
+		case PTRACE_GETEVENTMSG: return "PTRACE_GETEVENTMSG"; break;
+		case PTRACE_GETSIGINFO: return "PTRACE_GETSIGINFO"; break;
+		case PTRACE_SETSIGINFO: return "PTRACE_SETSIGINFO"; break;
+		default: break;
+	}
+
+	return "[unknown]";
+}
+
+#define PTRACE(req,pid,addr,data,retval,fatal)	do {	\
+						if (ptrace(req, pid, (void *)addr, (void *)data) == -1)	{	\
+							char ___pterrbuf[128];	\
+							snprintf(___pterrbuf, sizeof(___pterrbuf), "ptrace(%s, %d, 0x%lx, 0x%lx)",	\
+								ptrace_req_to_name(req), pid, (unsigned long)addr, (unsigned long)data);	\
+							PERROR(___pterrbuf);	\
+							PRINT_ERROR("Last ptrace error encountered at %s:%d\n", __FILE__, __LINE__);	\
+							if (fatal == PT_DONTFAIL) { }	\
+							else if (fatal)	\
+								exit((int)(uintptr_t)retval);	\
+							else	\
+								return retval;	\
+						}	\
+						} while (0)
+
+#define PTRACE_PEEK(val,req,pid,addr,retval,fatal)	do {	\
+							int ___pt_error = 0;	\
+							val = ptrace_peek(req, pid, (void *)addr, &___pt_error);	\
+							if (___pt_error) {	\
+								PRINT_ERROR("Last ptrace error encountered at %s:%d\n", __FILE__, __LINE__);	\
+								if (fatal == PT_DONTFAIL) { }	\
+								else if (fatal)	\
+									exit((int)(uintptr_t)retval);	\
+								else	\
+									return retval;	\
+							}	\
+						} while (0)
+
+static inline long
+ptrace_peek(long request, pid_t pid, void *addr, int *is_err) {
+	long ret;
+
+	errno = 0;
+	*is_err = 0;
+	ret = ptrace(request, pid, addr, NULL);
+
+	if (errno != 0) {
+		char errbuf[128];
+		char *reqstr = (request == PTRACE_PEEKTEXT) ? "PTRACE_PEEKTEXT" : "PTRACE_PEEKDATA";
+
+		snprintf(errbuf, sizeof(errbuf), "ptrace(%s, %d, %p)", reqstr, pid, addr);
+		PERROR(errbuf);
+		*is_err = 1;
+	}
+
+	return ret;
+}
 
 
 #define ANON_PREFIX_INTERNAL	"_anon_"

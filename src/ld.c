@@ -9,7 +9,6 @@
 #include <setjmp.h>
 #include <sys/types.h>
 #include <sys/wait.h>
-#include <sys/ptrace.h>
 #include <sys/shm.h>
 
 #include "config.h"
@@ -80,22 +79,23 @@ get_library_abs_path(const char *soname) {
 	return lm->l_name;
 }
 
-void
+int
 print_regs(pid_t pid) {
 	struct user_regs_struct regs;
 
-	if (ptrace(PTRACE_GETREGS, pid, 0, &regs) == -1) {
-		perror_pid("ptrace(PTRACE_GETREGS)", pid);
-		return;
-	}
+	PTRACE(PTRACE_GETREGS, pid, 0, &regs, -1, PT_RETERROR);
 
 	fprintf(stderr, "PID: %d, rip: %p, rax: %p, orig_rax: %p\n", pid, (void *)regs.rip, (void *)regs.rax, (void *)regs.orig_rax);
 	fprintf(stderr, "    ++ rdi = %p, rsi = %p, rdx = %p, r10 = %p, r8 = %p, r9 = %p\n",
 		(void *)regs.rdi, (void *)regs.rsi, (void *)regs.rdx,
 		(void *)regs.r10, (void *)regs.r8, (void *)regs.r9);
-	return;
+	return 0;
 }
 
+/*
+ * Call a library function in a remote process with the specified parameters,
+ * and return the result to the caller.
+ */
 uintptr_t
 call_remote_lib_func(pid_t pid, void *faddr, uintptr_t r1, uintptr_t r2, uintptr_t r3, uintptr_t r4,
 		uintptr_t r5, uintptr_t r6, int allow_event) {
@@ -105,17 +105,9 @@ call_remote_lib_func(pid_t pid, void *faddr, uintptr_t r1, uintptr_t r2, uintptr
 	int wait_status, err = 0;
 
 	// Step #1. Save the current registers and instruction.
-	if (ptrace(PTRACE_GETREGS, pid, 0, &oregs) == -1) {
-		perror_pid("ptrace(PTRACE_GETREGS)", pid);
-		return -1;
-	}
+	PTRACE(PTRACE_GETREGS, pid, 0, &oregs, -1, PT_RETERROR);
 
-	errno = 0;
-	saved_i = ptrace(PTRACE_PEEKTEXT, pid, oregs.rip, 0);
-	if (errno != 0) {
-		perror_pid("ptrace(PTRACE_PEEKTEXT)", pid);
-		return -1;
-	}
+	PTRACE_PEEK(saved_i, PTRACE_PEEKTEXT, pid, oregs.rip, -1, PT_RETERROR);
 
 	// Step #2. Replace the registers with the function parameters and
 	// prime the instruction pointer to call the library function
@@ -125,10 +117,7 @@ call_remote_lib_func(pid_t pid, void *faddr, uintptr_t r1, uintptr_t r2, uintptr
 	*iptr++ = 0xff;
 	*iptr++ = 0xd3;
 
-	if (ptrace(PTRACE_POKETEXT, pid, oregs.rip, call_i) == -1) {
-		perror_pid("ptrace(PTRACE_POKETEXT)", pid);
-		return -1;
-	}
+	PTRACE(PTRACE_POKETEXT, pid, oregs.rip, call_i, -1, PT_RETERROR);
 
 	memcpy(&nregs, &oregs, sizeof(nregs));
 	nregs.rdi = r1;
@@ -139,16 +128,12 @@ call_remote_lib_func(pid_t pid, void *faddr, uintptr_t r1, uintptr_t r2, uintptr
 	nregs.r9 = r6;
 	nregs.rbx = (unsigned long)faddr;
 
-	if (ptrace(PTRACE_SETREGS, pid, 0, &nregs) == -1) {
-		perror_pid("ptrace(PTRACE_SETREGS)", pid);
-		return -1;
-	}
+	PTRACE(PTRACE_SETREGS, pid, 0, &nregs, -1, PT_RETERROR);
 
 	// Step #3. Call into the library and wait for the return.
-	if (ptrace(PTRACE_CONT, pid, NULL, NULL) == -1) {
-		perror_pid("ptrace(PTRACE_CONT)", pid);
-		return -1;
-	} else if (waitpid(pid, &wait_status, 0) == -1) {
+	PTRACE(PTRACE_CONT, pid, NULL, NULL, -1, PT_RETERROR);
+
+	if (waitpid(pid, &wait_status, 0) == -1) {
 		perror_pid("waitpid", pid);
 		err = 1;
 	} else if (!WIFSTOPPED(wait_status) || (WSTOPSIG(wait_status) != SIGTRAP)) {
@@ -161,10 +146,9 @@ call_remote_lib_func(pid_t pid, void *faddr, uintptr_t r1, uintptr_t r2, uintptr
 	if (allow_event && ((wait_status >> 8) == (SIGTRAP | (allow_event << 8)))) {
 		PRINT_ERROR("XXX Detected event %d\n", allow_event);
 
-		if (ptrace(PTRACE_CONT, pid, NULL, NULL) == -1) {
-			perror_pid("ptrace(PTRACE_CONT)", pid);
-			return -1;
-		} else if (waitpid(pid, &wait_status, 0) == -1) {
+		PTRACE(PTRACE_CONT, pid, NULL, NULL, -1, PT_RETERROR);
+
+		if (waitpid(pid, &wait_status, 0) == -1) {
 			perror_pid("waitpid", pid);
 			return -1;
 		}
@@ -176,15 +160,8 @@ call_remote_lib_func(pid_t pid, void *faddr, uintptr_t r1, uintptr_t r2, uintptr
 	}
 
 	// Step #4. Restore the original registers and instruction and continue.
-	if (ptrace(PTRACE_POKETEXT, pid, oregs.rip, saved_i) == -1) {
-		perror_pid("ptrace(PTRACE_POKETEXT)", pid);
-		return -1;
-	}
-
-	if (ptrace(PTRACE_SETREGS, pid, 0, &oregs) == -1) {
-		perror_pid("ptrace(PTRACE_GETREGS)", pid);
-		return -1;
-	}
+	PTRACE(PTRACE_POKETEXT, pid, oregs.rip, saved_i, -1, PT_RETERROR);
+	PTRACE(PTRACE_SETREGS, pid, 0, &oregs, -1, PT_RETERROR);
 
 	if (err)
 		return -1;
@@ -194,6 +171,10 @@ call_remote_lib_func(pid_t pid, void *faddr, uintptr_t r1, uintptr_t r2, uintptr
 	return nregs.rax;
 }
 
+/*
+ * Inject a system call into the remote process with the specified parameters,
+ * execute it, and return the raw result to the caller.
+ */
 unsigned long
 call_remote_syscall(pid_t pid, int syscall_no, unsigned long r1, unsigned long r2, unsigned long r3,
 		unsigned long r4, unsigned long r5, unsigned long r6) {
@@ -203,17 +184,9 @@ call_remote_syscall(pid_t pid, int syscall_no, unsigned long r1, unsigned long r
 	int wait_status, err = 0;
 
 	// Step #1. Save the current registers and instruction.
-	if (ptrace(PTRACE_GETREGS, pid, 0, &oregs) == -1) {
-		perror_pid("ptrace(PTRACE_GETREGS)", pid);
-		return -1;
-	}
+	PTRACE(PTRACE_GETREGS, pid, 0, &oregs, -1, PT_RETERROR);
 
-	errno = 0;
-	saved_i = ptrace(PTRACE_PEEKTEXT, pid, oregs.rip, 0);
-	if (errno != 0) {
-		perror_pid("ptrace(PTRACE_PEEKTEXT)", pid);
-		return -1;
-	}
+	PTRACE_PEEK(saved_i, PTRACE_PEEKTEXT, pid, oregs.rip, -1, PT_RETERROR);
 
 	// Step #2. Replace the registers with syscall parameters and
 	// prime the instruction pointer to call the syscall
@@ -223,10 +196,7 @@ call_remote_syscall(pid_t pid, int syscall_no, unsigned long r1, unsigned long r
 	*iptr++ = 0x0f;
 	*iptr++ = 0x05;
 
-	if (ptrace(PTRACE_POKETEXT, pid, oregs.rip, syscall_i) == -1) {
-		perror_pid("ptrace(PTRACE_POKETEXT)", pid);
-		return -1;
-	}
+	PTRACE(PTRACE_POKETEXT, pid, oregs.rip, syscall_i, -1, PT_RETERROR);
 
 	memcpy(&nregs, &oregs, sizeof(nregs));
 	nregs.rax = syscall_no;
@@ -237,17 +207,13 @@ call_remote_syscall(pid_t pid, int syscall_no, unsigned long r1, unsigned long r
 	nregs.r8 = r5;
 	nregs.r9 = r6;
 
-	if (ptrace(PTRACE_SETREGS, pid, 0, &nregs) == -1) {
-		perror_pid("ptrace(PTRACE_SETREGS)", pid);
-		return -1;
-	}
+	PTRACE(PTRACE_SETREGS, pid, 0, &nregs, -1, PT_RETERROR);
 
 	// Step #3. Run the syscall and get the result.
 	// First step into the syscall.
-	if (ptrace(PTRACE_SYSCALL, pid, NULL, NULL) == -1) {
-		perror_pid("ptrace(PTRACE_SYSCALL)", pid);
-		return -1;
-	} else if (waitpid(pid, &wait_status, 0) == -1) {
+	PTRACE(PTRACE_SYSCALL, pid, NULL, NULL, -1, PT_RETERROR);
+
+	if (waitpid(pid, &wait_status, 0) == -1) {
 		perror_pid("waitpid", pid);
 		err = 1;
 	} else if (!WIFSTOPPED(wait_status) || ((WSTOPSIG(wait_status) & ~0x80) != SIGTRAP)) {
@@ -270,15 +236,8 @@ call_remote_syscall(pid_t pid, int syscall_no, unsigned long r1, unsigned long r
 	}
 
 	// Step #4. Restore the original registers and instruction and continue.
-	if (ptrace(PTRACE_POKETEXT, pid, oregs.rip, saved_i) == -1) {
-		perror_pid("ptrace(PTRACE_POKETEXT)", pid);
-		return -1;
-	}
-
-	if (ptrace(PTRACE_SETREGS, pid, 0, &oregs) == -1) {
-		perror_pid("ptrace(PTRACE_GETREGS)", pid);
-		return -1;
-	}
+	PTRACE(PTRACE_POKETEXT, pid, oregs.rip, saved_i, -1, PT_RETERROR);
+	PTRACE(PTRACE_SETREGS, pid, 0, &oregs, -1, PT_RETERROR);
 
 	if (err)
 		return -1;
@@ -287,6 +246,9 @@ call_remote_syscall(pid_t pid, int syscall_no, unsigned long r1, unsigned long r
 	return nregs.rax;
 }
 
+/*
+ * Get the %fs segment base address of a remote process.
+ */
 unsigned long
 get_fs_base_remote(pid_t pid) {
 	unsigned long saved_i, syscall_i, fs_result;
@@ -295,17 +257,8 @@ get_fs_base_remote(pid_t pid) {
 	int wait_status, err = 0;
 
 	// Step #1. Save the current registers and instruction.
-	if (ptrace(PTRACE_GETREGS, pid, 0, &oregs) == -1) {
-		perror_pid("ptrace(PTRACE_GETREGS)", pid);
-		return -1;
-	}
-
-	errno = 0;
-	saved_i = ptrace(PTRACE_PEEKTEXT, pid, oregs.rip, 0);
-	if (errno != 0) {
-		perror_pid("ptrace(PTRACE_PEEKTEXT)", pid);
-		return -1;
-	}
+	PTRACE(PTRACE_GETREGS, pid, 0, &oregs, -1, PT_RETERROR);
+	PTRACE_PEEK(saved_i, PTRACE_PEEKTEXT, pid, oregs.rip, -1, PT_RETERROR);
 
 	// Step #2. Replace the registers with syscall parameters and
 	// prime the instruction pointer to call the syscall
@@ -315,10 +268,7 @@ get_fs_base_remote(pid_t pid) {
 	*iptr++ = 0x0f;
 	*iptr++ = 0x05;
 
-	if (ptrace(PTRACE_POKETEXT, pid, oregs.rip, syscall_i) == -1) {
-		perror_pid("ptrace(PTRACE_POKETEXT)", pid);
-		return -1;
-	}
+	PTRACE(PTRACE_POKETEXT, pid, oregs.rip, syscall_i, -1, PT_RETERROR);
 
 	memcpy(&nregs, &oregs, sizeof(nregs));
 	nregs.rax = SYS_arch_prctl;
@@ -326,17 +276,13 @@ get_fs_base_remote(pid_t pid) {
 	nregs.rdi = 0x1002;
 	nregs.rsi = oregs.rsp - sizeof(void *);
 
-	if (ptrace(PTRACE_SETREGS, pid, 0, &nregs) == -1) {
-		perror_pid("ptrace(PTRACE_SETREGS)", pid);
-		return -1;
-	}
+	PTRACE(PTRACE_SETREGS, pid, 0, &nregs, -1, PT_RETERROR);
 
 	// Step #3. Run the syscall and get the result.
 	// First step into the syscall.
-	if (ptrace(PTRACE_SYSCALL, pid, NULL, NULL) == -1) {
-		perror_pid("ptrace(PTRACE_SYSCALL)", pid);
-		return -1;
-	} else if (waitpid(pid, &wait_status, 0) == -1) {
+	PTRACE(PTRACE_SYSCALL, pid, NULL, NULL, -1, PT_RETERROR);
+
+	if (waitpid(pid, &wait_status, 0) == -1) {
 		perror_pid("waitpid", pid);
 		err = 1;
 	} else if (!WIFSTOPPED(wait_status) || ((WSTOPSIG(wait_status) & ~0x80) != SIGTRAP)) {
@@ -359,15 +305,8 @@ get_fs_base_remote(pid_t pid) {
 	}
 
 	// Step #4. Restore the original registers and instruction and continue.
-	if (ptrace(PTRACE_POKETEXT, pid, oregs.rip, saved_i) == -1) {
-		perror_pid("ptrace(PTRACE_POKETEXT)", pid);
-		return -1;
-	}
-
-	if (ptrace(PTRACE_SETREGS, pid, 0, &oregs) == -1) {
-		perror_pid("ptrace(PTRACE_GETREGS)", pid);
-		return -1;
-	}
+	PTRACE(PTRACE_POKETEXT, pid, oregs.rip, saved_i, -1, PT_RETERROR);
+	PTRACE(PTRACE_SETREGS, pid, 0, &oregs, -1, PT_RETERROR);
 
 	if (err)
 		return -1;
@@ -377,14 +316,9 @@ get_fs_base_remote(pid_t pid) {
 		return nregs.rax;
 	}
 
-	errno = 0;
-	fs_result = ptrace(PTRACE_PEEKDATA, pid, oregs.rsp - sizeof(void *), 0);
-	if (errno != 0) {
-		perror_pid("ptrace(PTRACE_PEEKDATA)", pid);
-		return -1;
-	}
-
+	PTRACE_PEEK(fs_result, PTRACE_PEEKDATA, pid, oregs.rsp - sizeof(void *), -1, PT_RETERROR);
 	fprintf(stderr, "+++  Remote read fs base returning: %lx\n", fs_result);
+
 	return fs_result;
 }
 
@@ -1797,6 +1731,59 @@ replicate_process_remotely(pid_t pid, int **shmids) {
 
 	DESTROY_VMAP(vmas, MAX_REPLICATE_VMA);
 	return 0;
+}
+
+void *
+replicate_environ(pid_t pid) {
+	struct user_regs_struct regs;
+	unsigned char *ebuf;
+	char **eptr = environ, *ebufdata, *ebufdata_v;
+	size_t esize = sizeof(char *), edatasize = 0, ebuf_ind = 0;
+	void *res = NULL;
+
+	PTRACE(PTRACE_GETREGS, pid, 0, &regs, NULL, PT_RETERROR);
+
+	while (*eptr) {
+//		printf("eptr = %p [%s]\n", *eptr, *eptr);
+		edatasize += strlen(*eptr) + 1;
+		esize += strlen(*eptr) + 1 + sizeof(char *);
+		eptr++;
+	}
+
+	if (!(ebuf = malloc(esize))) {
+		PERROR("malloc");
+		return NULL;
+	}
+
+	regs.rsp -= esize;
+	regs.rsp &= ~(sizeof(void *)-1);
+
+	memset(ebuf, 0, esize);
+	ebufdata = (char *)(ebuf + (esize - edatasize));
+	ebufdata_v = (char *)regs.rsp + (esize - edatasize);
+	eptr = environ;
+
+	while (*eptr) {
+		((char **)ebuf)[ebuf_ind++] = ebufdata_v;
+		strcpy((char *)ebufdata, *eptr);
+		ebufdata += strlen(*eptr) + 1;
+		ebufdata_v += strlen(*eptr) + 1;
+		eptr++;
+	}
+
+	((char **)ebuf)[ebuf_ind] = NULL;
+
+	if (write_bytes_remote(pid, (void *)regs.rsp, ebuf, esize) < 0)
+		PRINT_ERROR("Error copying environment to remote process %d\n", pid);
+	else
+		res = (void *)regs.rsp;
+
+	free(ebuf);
+
+	if (res)
+		PTRACE(PTRACE_SETREGS, pid, 0, &regs, NULL, PT_RETERROR);
+
+	return res;
 }
 
 int

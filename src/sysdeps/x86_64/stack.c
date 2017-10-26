@@ -22,7 +22,6 @@
 #include "config.h"
 #include "stack.h"
 #include <stdlib.h>
-#include <sys/ptrace.h>
 #include <sys/user.h>
 
 
@@ -441,13 +440,7 @@ read_string_remote(pid_t pid, char *addr, size_t slen) {
 		size_t maxwrite;
 		long val;
 
-		errno = 0;
-
-		val = ptrace(PTRACE_PEEKDATA, pid, raddr, 0);
-		if (errno != 0) {
-			perror("ptrace(PTRACE_PEEKDATA)");
-			return NULL;
-		}
+		PTRACE_PEEK(val, PTRACE_PEEKDATA, pid, raddr, NULL, PT_RETERROR);
 
 		maxwrite = slen - nread;
 		if (maxwrite > sizeof(long))
@@ -486,23 +479,13 @@ static void *get_value(struct lt_config_shared *cfg, struct lt_arg *arg, pid_t t
 		sp_off += (sp_off % sizeof(void *));
 	}
 
-	errno = 0;
-	val = ptrace(PTRACE_PEEKDATA, target, sp_off, 0);
-	if (errno != 0) {
-		perror("ptrace(PTRACE_PEEKDATA)");
-		return NULL;
-	}
+	PTRACE_PEEK(val, PTRACE_PEEKDATA, target, sp_off, NULL, PT_RETERROR);
 
 	// Deal with slice
 	if (arg->pointer == -1) {
 		unsigned long ssize;
 
-		errno = 0;
-		ssize = ptrace(PTRACE_PEEKDATA, target, sp_off+sizeof(void *), 0);
-		if (errno != 0) {
-			perror("ptrace(PTRACE_PEEKDATA)");
-			return NULL;
-		}
+		PTRACE_PEEK(ssize, PTRACE_PEEKDATA, target, sp_off+sizeof(void *), NULL, PT_RETERROR);
 
 		if (next_off)
 			*next_off = offset + extra_off + (sizeof(void *) * 2);
@@ -525,14 +508,8 @@ static void *get_value(struct lt_config_shared *cfg, struct lt_arg *arg, pid_t t
 			return strdup("");
 		}
 
-		errno = 0;
-
 		sp_off += sizeof(void *);
-		slen = ptrace(PTRACE_PEEKDATA, target, sp_off, 0);
-		if (errno != 0) {
-			perror("ptrace(PTRACE_PEEKDATA)");
-			return NULL;
-		}
+		PTRACE_PEEK(slen, PTRACE_PEEKDATA, target, sp_off, NULL, PT_RETERROR);
 
 		if (slen > MAX_STRING_ALLOC_SIZE) {
 			// XXX: Do something.
