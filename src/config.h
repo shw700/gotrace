@@ -308,13 +308,18 @@ unsigned long get_fs_base_remote(pid_t pid);
 int replicate_process_remotely(pid_t pid, int **shmids);
 void *replicate_environ(pid_t pid);
 void *resolve_local_symbol(const char *libpath, const char *funcname);
+int flash_remote_library_memory(pid_t pid, const char *dsopath);
 
 
 void dump_wait_state(pid_t pid, int status, int force);
 int dump_instruction_state(pid_t pid);
+int trace_forever(pid_t pid);
 char *read_bytes_remote(pid_t pid, char *addr, size_t slen);
 int write_bytes_remote(pid_t pid, void *addr, void *buf, size_t blen);
 int check_vma_collision(pid_t pid1, pid_t pid2, int exclude_vsyscall, int exclude_self);
+
+
+extern unsigned long MAGIC_FUNCTION;
 
 
 
@@ -403,6 +408,8 @@ ptrace_req_to_name(long request) {
 		case PTRACE_PEEKDATA: return "PTRACE_PEEKDATA"; break;
 		case PTRACE_POKETEXT: return "PTRACE_POKETEXT"; break;
 		case PTRACE_POKEDATA: return "PTRACE_POKEDATA"; break;
+		case PTRACE_GETREGS: return "PTRACE_GETREGS"; break;
+		case PTRACE_SETREGS: return "PTRACE_SETREGS"; break;
 		case PTRACE_CONT: return "PTRACE_CONT"; break;
 		case PTRACE_KILL: return "PTRACE_KILL"; break;
 		case PTRACE_SINGLESTEP: return "PTRACE_SINGLESTEP"; break;

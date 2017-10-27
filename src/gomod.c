@@ -536,7 +536,7 @@ int _gomod_init(void)
 		hi += getpid();
 	}*/
 
-	fprintf(stderr, "Client injection module initialiation complete.\n");
+	fprintf(stderr, "Client injection module initialization complete.\n");
 	return cpid;
 }
 

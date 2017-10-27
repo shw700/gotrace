@@ -32,17 +32,17 @@ void *last_copy_start, *last_copy_end;
 
 
 int
-memcmp_remote(pid_t pid, void *buf, size_t size, unsigned long watch_val) {
+memcmp_remote(pid_t pid, void *lbuf, void *rbuf, size_t size) {
 	void *rdata;
 	size_t pctr;
 	const unsigned char *p1, *p2;
 
-	if (!(rdata = read_bytes_remote(pid, buf, size))) {
-		PRINT_ERROR("Error reading remote bytes at %p for comparison\n", buf);
+	if (!(rdata = read_bytes_remote(pid, rbuf, size))) {
+		PRINT_ERROR("Error reading remote bytes at %p for comparison\n", rbuf);
 		return -1;
 	}
 
-	p1 = buf;
+	p1 = lbuf;
 	p2 = rdata;
 
 	for (pctr = 0; pctr < size; pctr++) {
@@ -129,6 +129,13 @@ call_remote_lib_func(pid_t pid, void *faddr, uintptr_t r1, uintptr_t r2, uintptr
 	nregs.rbx = (unsigned long)faddr;
 
 	PTRACE(PTRACE_SETREGS, pid, 0, &nregs, -1, PT_RETERROR);
+
+	if (MAGIC_FUNCTION && (void *)MAGIC_FUNCTION == faddr) {
+		fprintf(stderr, "Starting trace at magic function: %p\n", faddr);
+		trace_forever(pid);
+		PRINT_ERROR("%s", "Magic function trace ended... exiting.\n");
+		exit(EXIT_SUCCESS);
+	}
 
 	// Step #3. Call into the library and wait for the return.
 	PTRACE(PTRACE_CONT, pid, NULL, NULL, -1, PT_RETERROR);
@@ -867,7 +874,11 @@ elf_read_vaddr(unsigned char *bindata, Elf64_Ehdr *ehdr, Elf64_Phdr *phdr, void 
 			continue;
 		}
 
-		// XXX: check to see if reqsize exceeds bounds.
+		if ((base_addr + reqsize) > (void *)(phdr->p_vaddr + phdr->p_memsz)) {
+			PRINT_ERROR("Virtual memory area %p:%zu would be fall out of bounds loaded program segment %p <-> %p\n",
+				base_addr, reqsize, (void *)phdr->p_vaddr, (void *)(phdr->p_vaddr + phdr->p_memsz));
+			return 0;
+		}
 
 //		PRINT_ERROR("PROGRAM HDR: %p -> %p (%lu)\n", (void *)phdr->p_vaddr, (void *)phdr->p_vaddr+phdr->p_memsz, phdr->p_memsz);
 		file_offset = phdr->p_offset + (unsigned long)base_addr - phdr->p_vaddr;
@@ -1046,12 +1057,12 @@ get_pcdata(const char *dsopath, void *base_addr, symbol_mapping_t *symmap, size_
 		goto out;
 	}
 
-	if (!(pclntab_off = elf_read_vaddr(bindata, ehdr, phdr, (void *)pclntab_addr, 0))) {
+	if (!(pclntab_off = elf_read_vaddr(bindata, ehdr, phdr, (void *)pclntab_addr, md.pclntable[SL_IND_SZ]))) {
 		PRINT_ERROR("Error reading program pclntab at virtual address: %p\n", (void *)pclntab_addr);
 		goto out;
 	}
 
-	if (!(filetab_off = elf_read_vaddr(bindata, ehdr, phdr, (void *)filetab_addr, 0))) {
+	if (!(filetab_off = elf_read_vaddr(bindata, ehdr, phdr, (void *)filetab_addr, filetab_size))) {
 		PRINT_ERROR("Error reading program filetab at virtual address: %p\n", (void *)filetab_addr);
 		goto out;
 	}
@@ -1953,5 +1964,133 @@ resolve_local_symbol(const char *libpath, const char *funcname) {
 out:
 	munmap(ehdr, fsize);
 	close(fd);
+	return result;
+}
+
+int
+flash_remote_library_memory(pid_t pid, const char *dsopath) {
+	Elf64_Ehdr *ehdr;
+	Elf64_Phdr *phdr;
+	Elf64_Shdr *shdr;
+	struct link_map *lm;
+	void *hnd;
+	unsigned char *bindata;
+	unsigned long reloc_base;
+	const char *strtab = NULL;
+	size_t fsize, i, strtab_size = 0;
+	int fd, result = 0;
+
+	if ((hnd = dlopen(dsopath, RTLD_NOW|RTLD_NOLOAD|RTLD_NODELETE)) == NULL) {
+		PRINT_ERROR("dlopen(%s): %s\n", dsopath, dlerror());
+		return -1;
+	}
+
+	if (dlinfo(hnd, RTLD_DI_LINKMAP, &lm) == -1) {
+		PRINT_ERROR("dlinfo(%s): %s\n", dsopath, dlerror());
+		return -1;
+	}
+
+	if (dlclose(hnd) != 0)
+		PRINT_ERROR("dlclose(%s): %s\n", dsopath, dlerror());
+
+	reloc_base = lm->l_addr;
+
+	dsopath = get_library_abs_path(dsopath);
+
+	if (elf_load_library(dsopath, &fd, &fsize, &ehdr, &phdr, &shdr) < 0) {
+		PRINT_ERROR("Error loading shared object: %s\n", dsopath);
+		return -1;
+	}
+
+	bindata = (unsigned char *)ehdr;
+
+	for (i = 0; i < ehdr->e_shnum; i++) {
+
+		if ((shdr[i].sh_type == SHT_STRTAB) && (i == ehdr->e_shstrndx)) {
+			strtab_size = shdr[i].sh_size;
+			strtab = (char *)(bindata + shdr[i].sh_offset);
+		}
+
+	}
+
+	if (!strtab) {
+		PRINT_ERROR("Error flashing DSO %s: could not locate string table\n", dsopath);
+		result = -1;
+		goto out;
+	}
+
+	for (i = 0; i < ehdr->e_shnum; i++) {
+
+		if ((shdr[i].sh_type != SHT_PROGBITS) && (shdr[i].sh_type != SHT_NOBITS))
+			continue;
+		else if (!shdr[i].sh_addr)
+			continue;
+		else if (!(shdr[i].sh_flags & SHF_ALLOC))
+			continue;
+		else if (!(shdr[i].sh_flags & SHF_WRITE))
+			continue;
+
+		if (shdr[i].sh_type == SHT_NOBITS) {
+			char *zbuf;
+
+//			printf("BSS: %lx -> %lx\n", shdr[i].sh_addr, shdr[i].sh_addr+reloc_base);
+
+			// Lazy but easy way to do this
+			if (!(zbuf = malloc(shdr[i].sh_size))) {
+				PERROR("malloc");
+				result = -1;
+				goto out;
+			}
+
+			memset(zbuf, 0, shdr[i].sh_size);
+
+			if (write_bytes_remote(pid, (void *)(shdr[i].sh_addr + reloc_base), zbuf, shdr[i].sh_size) < 0) {
+				PRINT_ERROR("Error flashing zero-byte section (%p) of remote DSO %s at PID %d\n",
+					(void *)shdr[i].sh_addr, dsopath, pid);
+				result = -1;
+			}
+
+			free(zbuf);
+			continue;
+		}
+
+//		printf("SH[%2zu]: %u: %p / %lu | %lx: %s\n", i, shdr[i].sh_type, (void *)shdr[i].sh_addr, shdr[i].sh_size, shdr[i].sh_flags, strtab+shdr[i].sh_name);
+
+		char *excluded_sections[] = { ".data.rel.ro", ".got", ".got.plt", ".data", NULL };
+		char **excluded = excluded_sections;
+		int skip = 0;
+
+		while (*excluded) {
+
+/*			if ((!strcmp(strtab+shdr[i].sh_name, ".data") && !strcmp(".data", *excluded))) {
+				fprintf(stderr, "  +++ data memcmp (%s) / %s : %lu  = %d\n", dsopath, strtab+shdr[i].sh_name, shdr[i].sh_size,
+					memcmp_remote(pid, (bindata + shdr[i].sh_offset), (void *)(shdr[i].sh_addr + reloc_base), shdr[i].sh_size));
+				skip = 1;
+				break;
+
+			}*/
+
+			if (!strcmp(*excluded, strtab+shdr[i].sh_name)) {
+				skip = 1;
+				break;
+			}
+
+			excluded++;
+		}
+
+		if (skip)
+			continue;
+
+		if (write_bytes_remote(pid, (void *)(shdr[i].sh_addr + reloc_base), (bindata + shdr[i].sh_offset), shdr[i].sh_size) < 0) {
+			PRINT_ERROR("Error flashing data section (%p) of remote DSO %s at PID %d\n",
+				(void *)shdr[i].sh_addr, dsopath, pid);
+			result = -1;
+		}
+	}
+
+out:
+	munmap(bindata, fsize);
+	close(fd);
+
 	return result;
 }

@@ -1,10 +1,9 @@
 remove transformer call stacks?
 can slice be read in before pass-off to arch-general display funcs?
-complex type missing... but who cares for now?
-get floats working quickly?
+complex and float type missing... but who cares for now? float probably easier to implement...
 prevent crashy vma copy by halting memcpy() at brk() limit?
 * collapsing is broken
-* use proper bounds checking in parsing ELF virtual addresses for PCDATA lookup
+remove worthless libelf dependency
 
 
 Major updates needed:

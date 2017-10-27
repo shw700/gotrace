@@ -33,6 +33,9 @@
 				} while (0)
 
 
+unsigned long MAGIC_FUNCTION = 0;
+
+
 typedef enum {
 	gint = 0,
 	gstring
@@ -95,7 +98,7 @@ char *excluded_intercepts[] = {
 	"net.appendHex"*/
 };
 
-pid_t master_pid = -1;
+pid_t master_pid = -1, socket_pid = -1;
 
 
 #define FLAG_TRAP_INTERRUPTED	0x1
@@ -129,6 +132,7 @@ int is_intercept_excluded(const char *fname);
 int set_pid_flags(pid_t pid, int flags, int do_mask);
 
 int save_remote_intercept(pid_t pid, const char *fname, void *addr, int is_entry);
+int initialize_remote_library(pid_t pid, const char *libpath, int cont_on_err);
 
 int is_thread_in_syscall(pid_t pid);
 void monitor_pid(pid_t pid, int do_remove);
@@ -520,8 +524,9 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 	if (!WIFSTOPPED(status) || (WSTOPSIG(status) != SIGTRAP)) {
 
 		if (WIFSTOPPED(status) && (WSTOPSIG(status) == SIGSTOP)) {
-			if (is_pid_new(pid)) {
-
+			if ((socket_pid > 0) && (pid == socket_pid)) {
+				PRINT_ERROR("Skipping over execution notification for module socket: %d\n", pid);
+			} else if (is_pid_new(pid)) {
 				PTRACE(PTRACE_SETOPTIONS, pid, NULL, trace_flags, EXIT_FAILURE, PT_FATAL);
 				is_thread_in_syscall(pid);
 
@@ -639,7 +644,7 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 		symname = lookup_addr_info(hot_pc, &argsize, &fname, &line_no);
 
 		if (set_ret_intercept(pid, symname, (void *)ret_addr, &ridx) < 0) {
-			PRINT_ERROR("%s", "Error: could not set intercept on return address\n");
+			PRINT_ERROR("Error: could not set intercept on return address for function \"%s\"\n", symname);
 	//		return -1;
 		}
 
@@ -888,6 +893,55 @@ check_wait_event(pid_t pid, int status) {
 	return 0;
 }
 
+int
+trace_forever(pid_t pid) {
+	struct user_regs_struct regs;
+	const char *fname = NULL;
+	char lastsym[128], tmpbuf[128], *symp;
+	size_t fend;
+	int wait_status = 0;
+
+	memset(lastsym, 0, sizeof(lastsym));
+
+	while (1) {
+		PTRACE(PTRACE_GETREGS, pid, NULL, &regs, -1, PT_RETERROR);
+		resolve_sym((void *)regs.rip, 0, tmpbuf, sizeof(tmpbuf), &fname);
+
+		if ((symp = strchr(tmpbuf, '+')))
+			fend = symp - tmpbuf;
+		else
+			fend = strlen(tmpbuf);
+
+		if (strncmp(lastsym, tmpbuf, fend)) {
+			fprintf(stderr, " - %s (%p)\n", tmpbuf, (void *)regs.rip);
+			fprintf(stderr, "      rdi = %llx, rsi = %llx, rdx = %llx, rcx = %llx             rax = %llx <- %s\n", regs.rdi, regs.rsi, regs.rdx, regs.rcx, regs.rax, lastsym);
+		}
+
+		memset(lastsym, 0, sizeof(lastsym));
+		strncpy(lastsym, tmpbuf, fend);
+
+		PTRACE(PTRACE_SINGLESTEP, pid, 0, 0, -1, PT_RETERROR);
+
+		if (waitpid(pid, &wait_status, __WALL) < 0) {
+			perror_pid("waitpid", pid);
+			return -1;
+		}
+
+		if (WIFSIGNALED(wait_status))
+			fprintf(stderr, "SIGNALED\n");
+		else if (WIFEXITED(wait_status))
+			fprintf(stderr, "EXITED\n");
+		else if (WIFSTOPPED(wait_status) && WSTOPSIG(wait_status) != SIGTRAP) {
+			fprintf(stderr, "STOPPED: %u\n", WSTOPSIG(wait_status));
+			dump_instruction_state(pid);
+			exit(EXIT_SUCCESS);
+		}
+
+	}
+
+	return 0;
+}
+
 void
 dump_intercepts(void) {
 	size_t i;
@@ -1008,8 +1062,6 @@ set_ret_intercept(pid_t pid, const char *fname, void *addr, size_t *pidx) {
 	unsigned char *tptr;
 	size_t i;
 
-//printf("set_ret_intercept: %s\n", fname);
-
 	if (saved_ret_prolog_entries == saved_ret_prolog_nentries) {
 		saved_prolog_t *new_prologs;
 
@@ -1031,7 +1083,26 @@ set_ret_intercept(pid_t pid, const char *fname, void *addr, size_t *pidx) {
 		}
 	}
 
-	PTRACE_PEEK(saved_ret_prolog, PTRACE_PEEKTEXT, pid, addr, -1, PT_RETERROR);
+	errno = 0;
+	saved_ret_prolog = ptrace(PTRACE_PEEKTEXT, pid, addr, 0);
+	if (errno != 0) {
+		static char *startup_funcs[] =
+			{ "_rt0_amd64_linux", "main", "runtime.rt0_go", NULL };
+		char **sptr = startup_funcs;
+
+		while (*sptr) {
+
+			if (!strcmp(fname, *sptr)) {
+				PRINT_ERROR("Warning: could not set return address breakpoint for function \"%s\"() but that's normal...\n", fname);
+				return 0;
+			}
+
+			sptr++;
+		}
+
+		perror_pid("ptrace(PTRACE_PEEKTEXT)", pid);
+		return -1;
+	}
 
 	mod_prolog = saved_ret_prolog;
 	tptr = (unsigned char *)&mod_prolog;
@@ -1296,6 +1367,50 @@ is_thread_in_syscall(pid_t pid) {
 }
 
 int
+dump_remote_backtrace(pid_t pid) {
+	struct user_regs_struct regs;
+	unsigned long pc, fp;
+	size_t level;
+	int ret = 0;
+
+	PTRACE(PTRACE_GETREGS, pid, 0, &regs, -1, PT_RETERROR);
+	pc = regs.rip;
+	fp = regs.rbp;
+
+	while (pc && fp) {
+		char tmpbuf[128];
+		const char *fname = NULL;
+		size_t fp_diff;
+		unsigned long fp0, fp1;
+
+		resolve_sym((void *)pc, 0, tmpbuf, sizeof(tmpbuf), &fname);
+		PRINT_ERROR_SAFE("BACKTRACE / %zu %p <%s> (%s)\n", level++, (void *)pc, tmpbuf, fname);
+		PTRACE_PEEK(fp0, PTRACE_PEEKDATA, pid, fp, -1, PT_RETERROR);
+		PTRACE_PEEK(fp1, PTRACE_PEEKDATA, pid, fp+8, -1, PT_RETERROR);
+
+		pc = fp1;
+		fp_diff = ((unsigned long)fp > fp1) ? (unsigned long)fp - fp0: fp0 - (unsigned long)fp;
+		fp = fp0;
+
+		if (fp_diff > 0x100000) {
+			PRINT_ERROR_SAFE("BACKTRACE warning: next frame pointer (%p) is far off last one (%zu bytes); aborting trace.\n",
+			(void *)fp, fp_diff);
+			ret = -1;
+			break;
+		}
+
+		if (!pc || !fp) {
+			resolve_sym((void *)pc, 0, tmpbuf, sizeof(tmpbuf), &fname);
+			PRINT_ERROR_SAFE("BACKTRACE FINAL (possibly spurious?)/ %zu %p <%s> (%s)\n", level++, (void *)pc, tmpbuf, fname);
+			ret = -1;
+		}
+
+	}
+
+	return ret;
+}
+
+int
 dump_instruction_state(pid_t pid) {
 	struct user_regs_struct regs;
 	siginfo_t si;
@@ -1318,6 +1433,7 @@ dump_instruction_state(pid_t pid) {
 		r_pc = dladdr((void *)regs.rip, &iinfo) != 0;
 
 		if (si.si_signo == SIGSEGV) {
+			dump_remote_backtrace(pid);
 //			ptrace(PTRACE_SETOPTIONS, pid, NULL, 0);
 			if (kill(pid, si.si_signo) == -1)
 				perror_pid("kill", pid);
@@ -1375,7 +1491,7 @@ int
 initialize_remote_library(pid_t pid, const char *libpath, int cont_on_err) {
 	struct link_map *lm;
 	void *hnd, *entry, **ia, **iaptr;
-	size_t ino = 0;
+	size_t ino = 0, ncalled = 0;
 	int rres;
 
 	entry = get_entry_point(libpath, &ia);
@@ -1398,6 +1514,7 @@ initialize_remote_library(pid_t pid, const char *libpath, int cont_on_err) {
 		entry += lm->l_addr;
 
 		PRINT_ERROR("About to call entry point for %s: %p\n", libpath, entry);
+		ncalled++;
 
 		if ((rres = call_remote_lib_func(pid, entry, 0, 0, 0, 0, 0, 0, PTRACE_EVENT_CLONE)) == -1) {
 			PRINT_ERROR("Error in remote library initialization of %s: %x\n", libpath, rres);
@@ -1410,10 +1527,11 @@ initialize_remote_library(pid_t pid, const char *libpath, int cont_on_err) {
 
 	iaptr = ia;
 
-	while (*iaptr) {
+	while (iaptr && *iaptr) {
 		ino++;
 		*iaptr += lm->l_addr;
 		PRINT_ERROR("About to call init array func #%zu for %s: %p\n", ino, libpath, *iaptr);
+		ncalled++;
 
 		if ((rres = call_remote_lib_func(pid, *iaptr, 0, 0, 0, 0, 0, 0, PTRACE_EVENT_CLONE)) == -1) {
 			PRINT_ERROR("Error in remote library initialization of %s: %x\n", libpath, rres);
@@ -1423,6 +1541,11 @@ initialize_remote_library(pid_t pid, const char *libpath, int cont_on_err) {
 		}
 
 		iaptr++;
+	}
+
+	if (!ncalled) {
+		PRINT_ERROR("Warning: did not find any entry points for DSO %s to call...\n", libpath);
+		return -1;
 	}
 
 	return rres;
@@ -1437,7 +1560,7 @@ trace_program(const char *progname, char * const *args) {
 	int wait_status;
 	static size_t nretries = 0;
 
-	printf("Attempting to trace...: %s\n", progname);
+	printf("Attempting to trace: %s ...\n", progname);
 
 	switch(master_pid = pid = fork()) {
 		case 0:
@@ -1475,7 +1598,7 @@ trace_program(const char *progname, char * const *args) {
 		exit(EXIT_FAILURE);
 	}
 	dump_wait_state(pid, wait_status, 0);
-	handle_trace_trap(pid, wait_status, 1);
+//	handle_trace_trap(pid, wait_status, 1);
 
 	fprintf(stderr, "Parent detected possible exec\n");
 
@@ -1595,26 +1718,53 @@ trace_program(const char *progname, char * const *args) {
 				exit(EXIT_FAILURE);
 			}*/
 
+/*			if (flash_remote_library_memory(pid, "/lib64/ld-linux-x86-64.so.2") < 0) {
+				PRINT_ERROR("%s", "Fatal error: failed to flash DSO: ld.so\n");
+				exit(EXIT_FAILURE);
+			}
 
+			fprintf(stderr, "Calling remote ld.so initialization...\n");
+			fprintf(stderr, "result = %d\n", initialize_remote_library(pid, "/lib64/ld-linux-x86-64.so.2", 1));
+			fprintf(stderr, "Remote ld.so initialization returned.\n");*/
 
-/*			fprintf(stderr, "Calling remote libc initialization...\n");
-			fprintf(stderr, "result = %d\n", initialize_remote_library(pid, "/lib/x86_64-linux-gnu/libc.so.6", 1));
+#define LIBC_PATH	"/lib/x86_64-linux-gnu/libc.so.6"
+			if (flash_remote_library_memory(pid, LIBC_PATH) < 0) {
+				PRINT_ERROR("Fatal error: failed to flash DSO: %s\n", LIBC_PATH);
+				exit(EXIT_FAILURE);
+			}
+
+			fprintf(stderr, "Calling remote libc initialization...\n");
+			fprintf(stderr, "result = %d\n", initialize_remote_library(pid, LIBC_PATH, 1));
 			fprintf(stderr, "Remote libc initialization returned.\n");
 
+#define LIBPTHREAD_PATH	"/lib/x86_64-linux-gnu/libpthread.so.0"
+			if (flash_remote_library_memory(pid, LIBPTHREAD_PATH) < 0) {
+				PRINT_ERROR("Fatal error: failed to flash DSO: %s\n", LIBPTHREAD_PATH);
+				exit(EXIT_FAILURE);
+			}
+
 			fprintf(stderr, "Calling remote libpthread initialization...\n");
-			fprintf(stderr, "result = %d\n", initialize_remote_library(pid, "/lib/x86_64-linux-gnu/libpthread.so.0", 1));
+			fprintf(stderr, "result = %d\n", initialize_remote_library(pid, LIBPTHREAD_PATH, 1));
 			fprintf(stderr, "Remote libpthread initialization returned.\n");
 
+/*			if (flash_remote_library_memory(pid, "libgomod.so.0.1.1") < 0) {
+				PRINT_ERROR("%s", "Fatal error: failed to flash DSO: libgomod\n");
+				exit(EXIT_FAILURE);
+			}
 
-			fprintf(stderr, "Calling remote initialization of %s...\n", GOMOD_PRINTLIB_NAME);
-			fprintf(stderr, "result = %d\n", initialize_remote_library(pid, GOMOD_PRINTLIB_NAME, 1));
-			fprintf(stderr, "Remote %s initialization returned.\n", GOMOD_PRINTLIB_NAME);
+			fprintf(stderr, "Calling remote libgomod initialization...\n");
+			fprintf(stderr, "result = %d\n", initialize_remote_library(pid, "libgomod.so.0.1.1", 1));
+			fprintf(stderr, "Remote libgomod initialization returned.\n");
+
+			if (flash_remote_library_memory(pid, GOMOD_PRINTLIB_NAME) < 0) {
+				PRINT_ERROR("%s", "Fatal error: failed to flash DSO: gomod_printlib\n");
+				exit(EXIT_FAILURE);
+			}
 */
 
 
 			// Update libc's pointer to the start of the environment variable array
 			PTRACE(PTRACE_POKEDATA, pid, &__environ, regs.rsp+16, 0, PT_RETERROR);
-
 
 
 
@@ -1629,6 +1779,9 @@ trace_program(const char *progname, char * const *args) {
 				PRINT_ERROR("%s", "Error in initialization of remote injection module\n");
 				exit(EXIT_FAILURE);
 			}
+
+			socket_pid = pres;
+
 
 			// The pid returned is our module's socket loop (native code)
 			if (ptrace(PTRACE_SETOPTIONS, pres, NULL, 0) < 0) {
@@ -1660,10 +1813,10 @@ trace_program(const char *progname, char * const *args) {
 
 
 
-			if (set_fs_base_remote(pid, old_fs) < 0) {
+/*			if (set_fs_base_remote(pid, old_fs) < 0) {
 				PRINT_ERROR("%s", "Error restoring original thread block in remote process\n");
 				exit(EXIT_FAILURE);
-			}/* else if (set_fs_base_remote(pres, old_fs) < 0) {
+			} else if (set_fs_base_remote(pres, old_fs) < 0) {
 				PRINT_ERROR("%s", "Error restoring original thread block in remote process\n");
 				exit(EXIT_FAILURE);
 			}*/
