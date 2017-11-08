@@ -1515,6 +1515,9 @@ static int getstr_addenum(struct lt_config_shared *cfg, struct lt_arg *arg,
 	return 0;
 }
 
+// The number of character repitions after which to collapse string display
+#define REPEAT_THRESHOLD	8
+
 static char *massage_string(const unsigned char *s, size_t slen)
 {
 	char *result;
@@ -1525,38 +1528,64 @@ static char *massage_string(const unsigned char *s, size_t slen)
 
 	rlen = (slen * 4) + 6;
 
-	if (!(result = xmalloc(rlen)))
+	if (!(result = xmalloc(rlen))) {
+		PERROR("malloc");
 		return NULL;
+	}
 
 	memset(result, 0, rlen);
 
 	for (i = 0, d_i = 0; i < slen; i++) {
+		unsigned char this_i = s[i];
+		size_t this_cnt = 0, j;
 
 		if ((rlen - 6) <= d_i) {
 			strcat(result, "...");
 			break;
 		}
 
-		if (!isgraph(s[i]) && !isspace(s[i])) {
+		for (j = i; j < slen; j++) {
+
+			if (s[j] == s[i])
+				this_cnt++;
+
+		}
+
+		if ((!isgraph(this_i) && !isspace(this_i)) || (this_i == '\f')) {
 			char hexbuf[8];
 
-			snprintf(hexbuf, sizeof(hexbuf), "\\x%.2x", s[i]);
+			snprintf(hexbuf, sizeof(hexbuf), "\\x%.2x", this_i);
 			memcpy(&(result[d_i]), hexbuf, 4);
 			d_i += 4;
 		}
-		else if ((s[i] != '\n') && (s[i] != '\r') && (s[i] != '\t'))
-			result[d_i++] = s[i];
+		else if ((this_i != '\n') && (this_i != '\r') && (this_i != '\t') && (this_i != '"'))
+			result[d_i++] = this_i;
 		else {
 			result[d_i++] = '\\';
 
-			if (s[i] == '\n')
+			if (this_i == '\n')
 				result[d_i++] = 'n';
-			else if (s[i] == '\r')
+			else if (this_i == '\r')
 				result[d_i++] = 'r';
-			else if (s[i] == '\t')
+			else if (this_i == '\t')
 				result[d_i++] = 't';
+			else if (this_i == '"')
+				result[d_i++] = '"';
 			else
 				result[d_i++] = '?';
+
+		}
+
+		if (this_cnt >= REPEAT_THRESHOLD) {
+			char repstr[16];
+
+			snprintf(repstr, sizeof(repstr), "x%zu ", this_cnt);
+
+			if ((rlen - strlen(repstr)) > d_i) {
+				strcpy(&result[d_i], repstr);
+				d_i += strlen(repstr);
+				i += this_cnt-1;
+			}
 
 		}
 		

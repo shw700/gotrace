@@ -4,7 +4,6 @@ complex and float type missing... but who cares for now? float probably easier t
 prevent crashy vma copy by halting memcpy() at brk() limit?
 * collapsing is broken
 * remove worthless libelf dependency
-* collapse duplicate bytes in string or slice view
 
 
 Major updates needed:

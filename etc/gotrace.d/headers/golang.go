@@ -395,3 +395,10 @@ func os.NewFile(fd uintptr, name string) *File
 func os.basename(name string) string
 
 func runtime.mSysStatInc(sysStat *uint64, n uintptr)
+
+
+
+func main.TouchConnection(c *net.TCPConn)
+//func main.GetConnection() *net.TCPConn
+func main.GetConnection() uintptr/p
+func main.Somefunc33(input1, input2 float32) float64
