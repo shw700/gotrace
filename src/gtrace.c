@@ -21,6 +21,7 @@
 
 #include "config.h"
 #include "args.h"
+#include "gomod_print/gomod_print.h"
 
 #include <zydis/include/Zydis/Zydis.h>
 
@@ -368,17 +369,13 @@ gotrace_socket_loop(void *param) {
 /*		if (set_all_intercepts(test_pid) < 0) {
 			PRINT_ERROR("%s", "Error encountered while setting intercepts.\n");
 			exit(EXIT_FAILURE);
-		}*/
+		}
 
-/*		char *fname = "main.GetConnection";
+		char *fname = "main.GetConnection";
 		unsigned long readdr = 0x0000000000402d60;
 		int res = call_remote_intercept(-1, &fname, &readdr, 1, 1);
 		fprintf(stderr, "XXX: int res = %d\n", res);
-
-		fname = "main.TouchConnection";
-		readdr = 0x0000000000402c60;
-		res = call_remote_intercept(-1, &fname, &readdr, 1, 1);
-		fprintf(stderr, "XXX: int res = %d\n", res);*/
+*/
 
 
 
@@ -1434,7 +1431,11 @@ dump_instruction_state(pid_t pid) {
 
 		if (si.si_signo == SIGSEGV) {
 			dump_remote_backtrace(pid);
+
 //			ptrace(PTRACE_SETOPTIONS, pid, NULL, 0);
+			PRINT_ERROR("   rdi = %llx, rsi = %llx, rax = %llx, rbx = %llx, rcx = %llx, rdx = %llx, rsp = %llx, rbp = %llx\n",
+				regs.rdi, regs.rsi, regs.rax, regs.rbx, regs.rcx, regs.rdx, regs.rsp, regs.rbp);
+
 			if (kill(pid, si.si_signo) == -1)
 				perror_pid("kill", pid);
 
@@ -1612,10 +1613,41 @@ trace_program(const char *progname, char * const *args) {
 		default: {
 			struct user_regs_struct regs;
 //			char **needed;
-			void *dlhandle, *initfunc = NULL;
+			void *dlhandle, *initfunc = NULL, *ginit_copy;
 			char libpath[512] = { 0 };
 			signed long our_fs, old_fs;
 			int pres;
+			size_t i = 0, ginit_size = 0;
+
+			// Not statically linked in.
+			if (!(dlhandle = dlopen(GOMOD_PRINTLIB_NAME, RTLD_NOW|RTLD_DEEPBIND))) {
+				PRINT_ERROR("dlopen(%s): %s\n", GOMOD_PRINTLIB_NAME, dlerror());
+				exit(EXIT_FAILURE);
+			}
+
+			fprintf(stderr, "XXX initializer table = %p\n", &golang_function_table);
+			while (golang_function_table[i].func_name[0]) {
+
+				if (!(golang_function_table[i].address = dlsym(dlhandle, golang_function_table[i].func_name))) {
+					PRINT_ERROR("dlsym(%s): %s\n", golang_function_table[i].func_name, dlerror());
+					exit(EXIT_FAILURE);
+				}
+
+//				fprintf(stderr, "XXX +++: %s -> %p\n", golang_function_table[i].func_name, golang_function_table[i].address);
+				i++;
+			}
+
+			i++;
+
+			ginit_size = (unsigned long)(&golang_function_table[i]) - (unsigned long)(&golang_function_table[0]);
+//			fprintf(stderr, "XXX: ginit table size = %zu\n", ginit_size);
+
+			if (!(ginit_copy = malloc(ginit_size))) {
+				PERROR("malloc");
+				exit(EXIT_FAILURE);
+			}
+
+			memcpy(ginit_copy, &golang_function_table[0], ginit_size);
 
 			if (check_vma_collision(getpid(), pid, 1, 1)) {
 				PRINT_ERROR("%s", "Error: possible VMA collision. Killing traced process...\n");
@@ -1755,12 +1787,13 @@ trace_program(const char *progname, char * const *args) {
 			fprintf(stderr, "Calling remote libgomod initialization...\n");
 			fprintf(stderr, "result = %d\n", initialize_remote_library(pid, "libgomod.so.0.1.1", 1));
 			fprintf(stderr, "Remote libgomod initialization returned.\n");
-
+*/
 			if (flash_remote_library_memory(pid, GOMOD_PRINTLIB_NAME) < 0) {
 				PRINT_ERROR("%s", "Fatal error: failed to flash DSO: gomod_printlib\n");
 				exit(EXIT_FAILURE);
 			}
-*/
+
+
 
 
 			// Update libc's pointer to the start of the environment variable array
@@ -1775,7 +1808,7 @@ trace_program(const char *progname, char * const *args) {
 				exit(EXIT_FAILURE);
 			}
 
-			if ((pres = call_remote_lib_func(pid, initfunc, 0, 0, 0, 0, 0, 0, PTRACE_EVENT_CLONE)) < 0) {
+			if ((pres = call_remote_lib_func(pid, initfunc, (unsigned long)ginit_copy, 0, 0, 0, 0, 0, PTRACE_EVENT_CLONE)) < 0) {
 				PRINT_ERROR("%s", "Error in initialization of remote injection module\n");
 				exit(EXIT_FAILURE);
 			}
@@ -1784,7 +1817,7 @@ trace_program(const char *progname, char * const *args) {
 
 
 			// The pid returned is our module's socket loop (native code)
-			if (ptrace(PTRACE_SETOPTIONS, pres, NULL, 0) < 0) {
+/*			if (ptrace(PTRACE_SETOPTIONS, pres, NULL, 0) < 0) {
 				int wstatus;
 
 				perror_pid("ptrace(~PTRACE_SETOPTIONS)", pres);
@@ -1799,7 +1832,7 @@ trace_program(const char *progname, char * const *args) {
 
 				PTRACE(PTRACE_SETOPTIONS, pres, NULL, 0, EXIT_FAILURE, PT_FATAL);
 				PRINT_ERROR("%s", "DID NOT fail again\n");
-			}
+			}*/
 
 
 

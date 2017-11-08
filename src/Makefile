@@ -59,14 +59,16 @@ $(GOTRACE_BIN): $(GOTRACE_OBJS)
 GOMOD_BIN=libgomod.so.$(CONFIG_VERSION)
 #GOMOD_LDFLAGS="-Wl,-init=_gomod_init" -fPIC -shared $(LDFLAGS)
 GOMOD_LDFLAGS=-fPIC -shared $(LDFLAGS)
-GOMOD_LIB=-ldl -lpthread gomod_printlib.a $(ZYDIS_LIB)
+#GOMOD_LIB=-ldl -lpthread gomod_printlib.a $(ZYDIS_LIB)
+GOMOD_LIB=-ldl -lpthread $(ZYDIS_LIB)
 GOMOD_OBJS=\
 	src/gomod.o \
 	src/network.o \
 	src/misc.o \
 	src/dlopen_stub.o \
 	src/serializer_mod.o \
-	src/intercept.o
+	src/intercept.o \
+	src/gheap.o
 
 OBJS+=$(GOMOD_OBJS)
 PROGRAMS+=$(GOMOD_BIN)
@@ -75,8 +77,10 @@ GCCGO=gccgo
 GO=go
 
 $(GOMOD_BIN): $(GOMOD_OBJS)
-	GOPATH=`pwd`/src/gomod_print $(GO) build -buildmode=c-shared -o gomod_printlib.a gomod_print
+#	GOPATH=`pwd`/src/gomod_print $(GO) build -buildmode=c-shared -o gomod_printlib.a gomod_print
 	$(QUIET_LD)$(CC) $(CFLAGS) $(GOMOD_LDFLAGS) -o $@ $^ $(GOMOD_LIB)
+	GOPATH=`pwd`/src/gomod_print $(GO) build -buildmode=shared gomod_print
+	test -e gomod_printlib.so || ln -s gomod_print gomod_printlib.so
 
 CPPFLAGS+=-I./zydis/include -I./zydis/build
 CPPFLAGS+=-DCONFIG_LIBDIR=\"$(libdir)\"

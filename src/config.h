@@ -38,6 +38,8 @@
 #include "list.h"
 #include "elfh.h"
 
+#include "gomod_print/gomod_print.h"
+
 
 typedef struct function_call {
 	char *fn_name;
@@ -310,13 +312,17 @@ void *replicate_environ(pid_t pid);
 void *resolve_local_symbol(const char *libpath, const char *funcname);
 int flash_remote_library_memory(pid_t pid, const char *dsopath);
 
-
 void dump_wait_state(pid_t pid, int status, int force);
 int dump_instruction_state(pid_t pid);
 int trace_forever(pid_t pid);
 char *read_bytes_remote(pid_t pid, char *addr, size_t slen);
 int write_bytes_remote(pid_t pid, void *addr, void *buf, size_t blen);
 int check_vma_collision(pid_t pid1, pid_t pid2, int exclude_vsyscall, int exclude_self);
+
+char *call_gofunc(void *addr, int set_new_fs, int no_ret, void *param, void **mout);
+char *call_gofunc_init(golang_func_t *inittable, void *addr, int set_new_fs, int no_ret, void *param, void **mout);
+char *call_gofunc_by_name_init(golang_func_t *inittable, const char *funcname, int set_new_fs, int no_ret, void *param, void **mout);
+
 
 
 extern unsigned long MAGIC_FUNCTION;
@@ -511,7 +517,7 @@ typedef struct __attribute__((packed)) gomod_data_hdr {
 
 
 #define GOMOD_LIB_NAME		"libgomod.so."CONFIG_VERSION
-#define GOMOD_PRINTLIB_NAME	"gomod_printlib.a"
+#define GOMOD_PRINTLIB_NAME	"gomod_printlib.so"
 #define GOMOD_INIT_FUNC		"_gomod_init"
 
 #define MAX_STRING_ALLOC_SIZE	8192

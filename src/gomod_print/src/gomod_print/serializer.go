@@ -8,11 +8,8 @@ import (
         "unsafe"
 )
 
-// extern char *gotrace_print_net__TCPConn(unsigned long);
-import "C"
 
-//export gotrace_print_net__TCPConn
-func gotrace_print_net__TCPConn(c uintptr) *C.char {
+func gotrace_print_net__TCPConn(c uintptr) string {
         cc := (*net.TCPConn)(unsafe.Pointer(c))
 	desc := "TCPConn(nil)"
 
@@ -23,7 +20,24 @@ func gotrace_print_net__TCPConn(c uintptr) *C.char {
 	        desc = fmt.Sprintf("(TCPConn: %v <-> %v)", prune_addr(a1), prune_addr(a2))
 	}
 
-        return C.CString(desc)
+        return desc
+}
+
+func GetConnection() *net.TCPConn {
+	servAddr := "www.google.com:443"
+	fmt.Println("Resolving")
+	tcpAddr, err := net.ResolveTCPAddr("tcp", servAddr)
+	if err != nil {
+		return nil
+	}
+
+	fmt.Println("Connecting")
+	conn, err := net.DialTCP("tcp", nil, tcpAddr)
+	if err != nil {
+		return nil
+	}
+
+	return conn
 }
 
 func prune_addr(astr string) string {

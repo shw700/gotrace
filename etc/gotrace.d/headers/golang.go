@@ -35,6 +35,12 @@ const errno (
 
 func runtime.gcenable()
 func runtime.osinit()
+func runtime.getproccount() int32
+func runtime.sysargs(argc int32, argv **byte)
+func runtime.args(c int32, v **byte)
+func runtime.check()
+func runtime.checkASM() bool
+func runtime.goargs()
 
 func runtime.convT2E(t *_type, elem unsafe.Pointer) (e face)
 //func runtime.convT2I(tab *_type, elem unsafe.Pointer) (i iface)
@@ -42,6 +48,7 @@ func runtime.convT2I(tab *_type, elem *_elem) (i iface)
 func runtime.assertE2T2(typ *byte, iface uintptr/p) (ret any, ok bool)
 func runtime.assertI2T2(typ *_type, iface any) (ret any, ok bool)
 func runtime.efacethash(i1 uintptr/x) (ret uint32)
+func runtime.ifacethash(i iface) uint32
 
 func runtime.memhash(p unsafe.Pointer, seed, s uintptr) uintptr/x
 func runtime.getitab(inter *interfacetype, typ *_type, canfail bool) *itab
@@ -52,6 +59,7 @@ func runtime.memclr(ptr unsafe.Pointer, n uintptr)
 
 // malloc/dynamic memory
 
+func runtime.minit()
 func runtime.mallocinit()
 func runtime.mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer
 func runtime.newobject(typ *_type) unsafe.Pointer
@@ -61,7 +69,17 @@ func runtime.persistentalloc1(size, align uintptr, sysStat *uint64) unsafe.Point
 func runtime.nextSample() int32
 //func allocm(_p_ *p, fn func()) *m
 func runtime.allocm(_p_ *p, fn pfn) *m
+func runtime.mcommoninit(mp *m)
+func runtime.startm(_p_ *p, spinning bool)
+func runtime.allocmcache() *mcache
 func runtime.(h *mheap) alloc_m(npage uintptr, sizeclass int32, large bool) *mspan
+func runtime.(h *mheap) allocStack(npage uintptr)
+func runtime.(h *mheap) freeSpanLocked(s *mspan, acctinuse, acctidle bool, unusedsince int64)
+func runtime.(h *mheap) allocSpanLocked(npage uintptr) *mspan
+func runtime.(span *mspan) init(start pageID, npages uintptr)
+func runtime.(list *mSpanList) insert(span *mspan)
+func runtime.(list *mSpanList) remove(span *mspan)
+
 
 func runtime.heapBits.initSpan(s *mspan)
 func runtime.recordspan(vh unsafe.Pointer, p unsafe.Pointer)
@@ -85,6 +103,7 @@ func runtime.GOROOT() string
 func runtime.strequal(unsafe.Pointer p, unsafe.Pointer q) bool
 
 // Atomic operations
+func runtime.testAtomic64()
 func runtime.atomicstorep(ptr unsafe.Pointer, new unsafe.Pointer)
 func sync\atomic.LoadPointer(addr *unsafe.Pointer) unsafe.Pointer
 func sync\atomic.LoadUint32(addr *uint32) uint32
@@ -111,6 +130,7 @@ func runtime.casgstatus(gp *g, oldval, newval uint32)
 func runtime.mmap(addr uintptr, n uintptr, prot/om int32=mmap_prot, flags/x int32, fd int32, off uint32) unsafe.Pointer
 //func mmap_fixed(v unsafe.Pointer, n uintptr, prot, flags, fd int32, offset uint32) unsafe.Pointer 
 func runtime.mmap_fixed(v unsafe.Pointer, n uintptr, prot/om int32=mmap_prot, flags/x int32, fd int32, offset uint32) unsafe.Pointer
+func runtime.callCgoMmap(addr unsafe.Pointer, n uintptr, prot, flags, fd int32, off uint32) uintptr/p
 
 // channels
 func runtime.closechan(c *hchan)
@@ -187,6 +207,10 @@ func net.appendHex(dst []byte, i uint32) []byte
 //func net.ipToSockaddr(family int, ip IP, port int, zone string) (syscall.Sockaddr, error)
 func syscall.Connect(fd int, sa Sockaddr) (err error)
 func net.setDefaultSockopts(s, family, sotype int, ipv6only bool) error
+func net.trimSpace(x []byte) []byte
+func net.removeComment(line []byte) []byte
+func net.lowerASCIIBytes(x []byte)
+func net.bytesEqual(x, y []byte) bool
 
 func net.dtoi(s string) (n int, i int, ok bool)
 func net.itoa(val int) string
@@ -220,6 +244,7 @@ func runtime.goschedImpl(gp *g)
 //func runqgrab(_p_ *p, batch *[256]guintptr, batchHead uint32, stealRunNextG bool) uint32
 func runtime.runqgrab(_p_ *p, batch *guintptr, batchHead uint32, stealRunNextG bool) uint32
 func runtime.runqget(_p_ *p) (gp *g, inheritTime bool)
+func runtime.globrunqget(_p_ *p, max int32) *g
 func runtime.runqput(_p_ *p, gp *g, next bool)
 func runtime.goready(gp *g, traceskip int)
 func runtime.deferreturn(arg0 uintptr/p)
@@ -236,6 +261,7 @@ func runtime.systemstack(fn pfn)
 func runtime.stackpoolalloc(order uint8) gclinkptr
 func runtime.newstack()
 func runtime.morestack()
+func runtime.morestack_noctxt()
 func runtime.rewindmorestack(buf *gobuf)
 func runtime.sigaltstack(new, old *stackt)
 func runtime.signalstack(s *stack)
@@ -244,28 +270,37 @@ func runtime.initsig(preinit bool)
 func runtime.malg(stacksize int32) *g
 func runtime.sigInstallGoHandler(sig uint32) bool
 func runtime.rt_sigaction(sig uintptr, new, old *sigactiont, size uintptr) int32
+func runtime.rtsigprocmask(sig uint32, new, old *sigset, size int32)
 
 func runtime.checkdead()
 func runtime.schedule()
+func runtime.sched_getaffinity(pid, len uintptr, buf *uintptr) int32
 func runtime.mput(mp *m)
 func runtime.releasep() *p
 func runtime.pidleput(_p_ *p)
 func runtime.pidleget() *p
 func runtime.readgstatus(gp *g) uint32
+func runtime.allgadd(gp *g)
 func runtime.mpreinit(mp *m)
 func runtime.publicationBarrier()
 func runtime.writebarrierptr_nostore(dst *uintptr, src uintptr)
+func runtime.gcMaxStackBarriers(stackSize int) (n int)
+func runtime.lockextra(nilokay bool) *m
+func runtime.unlockextra(mp *m)
+func runtime.checkmcount()
 
+func runtime.newproc1(fn *funcval, argp *uint8, narg int32, nret int32, callerpc uintptr) *g
 func runtime.execute(gp *g, inheritTime bool)
 func runtime.procyield(cycles uint32)
 func runtime.osyield()
 func runtime.ready(gp *g, traceskip int, next bool)
 //func gopark(unlockf func(*g, unsafe.Pointer) bool, lock unsafe.Pointer, reason string, traceEv byte, traceskip int)
 func runtime.gopark(unlockf pfn, lock unsafe.Pointer, reason string, traceEv byte, traceskip int)
-func rnutime.goparkunlock(lock *mutex, reason string, traceEv byte, traceskip int)
+func runtime.park_m(gp *g)
+func runtime.goparkunlock(lock *mutex, reason string, traceEv byte, traceskip int)
+func runtime.parkunlock_c(gp *g, lock unsafe.Pointer) bool
 func threadentry(v uintptr/p)
 func runtime.adjustframe(frame *stkframe, arg unsafe.Pointer) bool
-func runtime.pcdatavalue(f *_func, table int32, targetpc uintptr/p, cache *pcvalueCache) int32
 func runtime.jmpdefer(fv *funcval, argp uintptr)
 
 func runtime.gettid() uint32
@@ -274,15 +309,23 @@ func runtime.mstart()
 func runtime.mstart1()
 
 func runtime.fastrand1() uint32
+func runtime.getRandomData(r []byte)
 
 func runtime.findfunc(pc uintptr) funcInfo
 func runtime.findmoduledatap(pc uintptr/p) *moduledata
 func runtime.funcspdelta(f *_func, targetpc uintptr/p, cache *pcvalueCache) int32
 func runtime.pcvalue(f *_func, off int32, targetpc uintptr/p, cache *pcvalueCache, strict bool) int32
+func runtime.pcdatavalue(f *_func, table int32, targetpc uintptr/p, cache *pcvalueCache) int32
+func runtime.funcdata(f *_func, i int32) unsafe.Pointer
+func runtime.adjustpointers(scanp unsafe.Pointer, cbv *bitvector, adjinfo *adjustinfo, f *_func)
 func runtime.step(p []byte, pc *uintptr, val *int32, first bool) (newp []byte, ok bool)
+func runtime.getArgInfo(frame *stkframe, f *_func, needArgMap bool) (arglen uintptr, argmap *bitvector)
 func runtime.stackmapdata(stkmap *stackmap, n int32) bitvector
+func runtime.gotraceback() (level int32, all, crash bool)
+
 func runtime.adjustpointer(adjinfo *adjustinfo, vpp unsafe.Pointer)
 func runtime.handoffp(_p_ *p)
+func runtime.incidlelocked(v int32)
 //func newm(fn func(), _p_ *p)
 func runtime.newm(fn pfn, _p_ *p)
 func runtime.acquirep(_p_ *p)
@@ -290,6 +333,9 @@ func runtime.acquirep1(_p_ *p)
 func runtime.gosave(buf *gobuf)
 func runtime.gogo(buf *gobuf)
 func runtime.prefetchnta(addr uintptr/p)
+func runtime.prefetcht0(addr uintptr/p)
+func runtime.prefetcht1(addr uintptr/p)
+func runtime.prefetcht2(addr uintptr/p)
 
 // Slices
 func runtime.makeslice(et *_type, len, cap int) slice
@@ -302,6 +348,7 @@ func runtime\internal\atomic.Storeuintptr(ptr *uintptr, new uintptr)
 func runtime\internal\atomic.Xchg(ptr *uint32, new uint32) uint32
 func runtime\internal\atomic.Loaduintptr(ptr *uint32, new uint32) uint32
 func runtime\internal\atomic.Cas(ptr *uint32, old, new uint32) bool
+func runtime\internal\atomic.Casp1(ptr *unsafe.Pointer, old, new unsafe.Pointer) bool
 func runtime\internal\atomic.Cas64(ptr *uint64, old, new uint64) bool
 func runtime\internal\atomic.Casuintptr(ptr *uintptr, old, new uintptr) bool
 func runtime\internal\atomic.Storep1(ptr unsafe.Pointer/p, val unsafe.Pointer/p)$a
@@ -323,6 +370,7 @@ func runtime.rawstring(size int) (s string, b []byte)
 func runtime.rawstringtmp(buf *tmpBuf, l int) (s string, b []byte)
 func runtime.slicebytetostring(buf *tmpBuf, b []byte) (str string)
 func runtime.concatstrings(buf *tmpBuf, a []string) string
+func runtime.eqstring(string, string) bool
 
 // Bytes
 func bytes.IndexByte(s []byte, c byte) int
@@ -345,3 +393,5 @@ func os.NewFile(fd uintptr, name string) *File
 
 // OS
 func os.basename(name string) string
+
+func runtime.mSysStatInc(sysStat *uint64, n uintptr)

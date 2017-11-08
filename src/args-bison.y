@@ -463,6 +463,7 @@ POINTER NAME
 			ERROR("unknown argument type[7] - %s\n", $2);
 	}
 
+	arg->real_type_name = strdup($2);
 	$$ = arg;
 }
 |

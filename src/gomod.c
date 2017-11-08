@@ -17,17 +17,15 @@
 #include <zydis/include/Zydis/Zydis.h>
 
 
-extern void *___dlopen_stub;
 extern void *func_hook_start, *func_hook_end;
 int _gotrace_socket_fd = -1;
 
 int client_socket_loop(void *arg);
 unsigned long set_intercept_redirect(void *addr, unsigned long *ptrapaddr);
-int map_stub(void);
 
-char *call_golang_func_by_name(const char *fname, void *param);
-char *call_golang_func_str(void *func, void *param);
 char *call_data_serializer(const char *dtype, void *addr);
+
+golang_func_t *all_gofuncs = NULL;
 
 
 typedef struct landing_pad {
@@ -52,183 +50,25 @@ sig_handler(int signo, siginfo_t *si, void *ucontext) {
 	_exit(0);
 }
 
-
-int
-call_mallocinit() {
-	static jmp_buf j;
-
-	void (*minitptr)(void);
-
-	if (setjmp(j)) {
-		fprintf(stderr, "Forcing return.\n");
-		return 0;
-	}
-
-//	fprintf(stderr, "IN MALLOCINIT\n");
-	minitptr = (void *)0x000000000040fb00;
-	minitptr();
-//	fprintf(stderr, "AFTER MALLOCINIT\n");
-	longjmp(j, 1);
-
-	return 0;
-}
-char *
-call_golang_func_by_name(const char *fname, void *param)
-{
-	void *faddr;
-
-	if (!(faddr = dlsym(RTLD_DEFAULT, fname))) {
-		fprintf(stderr, "Error calling golang function \"%s\": %s\n", fname, dlerror());
-		return NULL;
-	}
-
-	return call_golang_func_str(faddr, param);
-}
-
-#define arch_prctl(code,addr)	syscall(SYS_arch_prctl, code, addr)
-
-char *
-call_golang_func_str(void *func, void *param) {
-	static char fs_buf[512];
-	static char fs_buf_helper[512];
-	static char fs_buf_helper2[512];
-	static char fs_buf_helper3[512];
-	unsigned long saved_fs;
-	char *ret = NULL;
-	int once = 1;
-
-//	fprintf(stderr, "calling mallocinit() first\n");
-	call_mallocinit();
-//	fprintf(stderr, "returned from mallocinit\n");
-
-	if (once) {
-		unsigned long *pword = (unsigned long *)fs_buf;
-		size_t i;
-
-		memset(fs_buf, 0, sizeof(fs_buf));
-		memset(fs_buf_helper, 0, sizeof(fs_buf_helper));
-		memset(fs_buf_helper2, 0, sizeof(fs_buf_helper2));
-		memset(fs_buf_helper3, 0, sizeof(fs_buf_helper3));
-
-		for (i = 0; i < sizeof(fs_buf)/sizeof(void *); i++) {
-//			*pword++ = (unsigned long)0x78bce0;
-//			*pword++ = (unsigned long)&fs_buf_helper;
-		if (i == 15)
-			*pword++ = (unsigned long)&fs_buf_helper;
-		else
-			*pword++ = (unsigned long)0xc0ffee000+i;
-		}
-
-
-		pword = (unsigned long *)fs_buf_helper;
-
-		for (i = 0; i < sizeof(fs_buf_helper)/sizeof(void *); i++) {
-		if (!i)
-			*pword++ = (unsigned long)fs_buf;
-//			*pword++ = (unsigned long)0x00007fffff7fec20;
-		else if ((i >= 6) && (i <= 9))
-			*pword++ = (unsigned long)0x000000000078c020;
-		else
-			*pword++ = (unsigned long)0xdeadb000+i;
-		}
-//			*pword++ = (unsigned long)&fs_buf_helper2;
-
-		pword = (unsigned long *)fs_buf_helper2;
-		for (i = 0; i < sizeof(fs_buf_helper2)/sizeof(void *); i++)
-			*pword++ = (unsigned long)&fs_buf_helper3;
-
-		fs_buf_helper2[187] = 0x37;
-		fs_buf_helper2[188] = 0x0;
-		fs_buf_helper2[189] = 0x0;
-		fs_buf_helper2[190] = 0x0;
-		fs_buf_helper2[191] = 0x0;
-		fs_buf_helper2[192] = 0x0;
-	}
-
-	if (arch_prctl(ARCH_GET_FS, &saved_fs) == -1) {
-		perror("arch_prctl(ARCH_GET_FS)");
-		return NULL;
-	}
-
-	fprintf(stderr, "saved fs: %p; new: %p\n", (void *)saved_fs, (void *)fs_buf+256);
-	fprintf(stderr, "Bufs: %p, 1=%p, 2=%p, 3=%p\n", fs_buf, fs_buf_helper, fs_buf_helper2, fs_buf_helper3);
-	fprintf(stderr, "Calling: %p / %p\n", func, param);
-
-	if (arch_prctl(ARCH_SET_FS, fs_buf+128) == -1) {
-		perror("arch_prctl(ARCH_SET_FS)");
-		return NULL;
-	}
-
-
-	asm (	"push %%rdx;		\
-		call *%%rbx;		\
-		mov 8(%%rsp), %%rbx;	\
-		nop;"
-		: "=b" (ret)
-		: "b" (func), "d" (param)
-	);
-
-	if (arch_prctl(ARCH_SET_FS, saved_fs) == -1) {
-		perror("arch_prctl(ARCH_SET_FS)");
-		return NULL;
-	}
-
-	return ret;
-}
-
-int
-map_stub(void) {
-	unsigned char *jmpptr, *buf;
-	uint32_t search = 0xdeadbeef;
-
-	if ((buf = mmap(NULL, 4096, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_ANONYMOUS|MAP_PRIVATE, 0, 0)) == MAP_FAILED) {
-		perror("mmap");
-		return -1;
-	}
-
-	memset(buf, 0x90, 128);
-	memcpy(buf, ___dlopen_stub, 80);
-
-	jmpptr = buf;
-
-	while (jmpptr < (buf+128)) {
-		if (!memcmp(jmpptr, &search, sizeof(search)))
-			break;
-
-		jmpptr++;
-	}
-
-	if (jmpptr >= (buf+128)) {
-		fprintf(stderr, "Error: search failed!\n");
-		return -1;
-	}
-
-	//*((unsigned long *)jmpptr) = 0x4007b0;
-        //somefunc = (void *)buf;
-	//somefunc();
-
-	return 0;
-}
-
 char *
 call_data_serializer(const char *dtype, void *addr) {
-	golang_serializer_func sfunc;
-	unsigned long uaddr = (unsigned long)addr;
-	char resbuf[1024];
-	char *result;
+	char *result = NULL;
+	size_t i = 0;
 
-	memset(resbuf, 0, sizeof(resbuf));
-	snprintf(resbuf, sizeof(resbuf), "XXX: %s() / %p", dtype, addr);
+	if (!all_gofuncs) {
+		PRINT_ERROR("%s", "Error calling golang data serializer; could not locate function table\n");
+		return NULL;
+	}
 
-	if ((sfunc = get_golang_serializer(dtype))) {
-		char *dstr;
+	while (all_gofuncs[i].func_name[0]) {
 
-		dstr = sfunc(uaddr);
-		strncpy(resbuf, dstr, sizeof(resbuf));
-	} else
-		fprintf(stderr, "Warning: serialization request on unsupported type: %s\n", dtype);
+		if (!strcmp(all_gofuncs[i].type_name, dtype)) {
+			result = call_gofunc_init(all_gofuncs, all_gofuncs[i].address, 0, 0, addr, NULL);
+			break;
+		}
 
-	result = strdup(resbuf);
+		i++;
+	}
 
 	return result;
 }
@@ -380,8 +220,6 @@ client_socket_loop(void *arg) {
 		size_t dblen;
 		int reqtype;
 
-		fprintf(stderr, "Loop Attempting to read bytes from %d\n", fd);
-
 		if (!(dbuf = recv_gt_msg(tid, fd, -1, &dblen, &reqtype, 0, NULL))) {
 			PRINT_ERROR("%s", "Client module encountered error.... shutting down\n");
 			break;
@@ -428,15 +266,11 @@ client_socket_loop(void *arg) {
 			fdata = (unsigned long *)(fname + strlen(fname) + 1);
 			fprintf(stderr, "Loop received serialize data request: %s() / %p\n",
 				fname, (void *)*fdata);
-/*			if (!(sdata = call_data_serializer(fname, (void *)*fdata))) {
+			if (!(sdata = call_data_serializer(fname, (void *)*fdata))) {
 				PRINT_ERROR("Loop encountered unexpected error serializing type data: %s\n", fname);
 				free(dbuf);
 				break;
-			} else */{
-				char sbuf[128];
-
-				snprintf(sbuf, sizeof(sbuf), "___%s(%p)___", fname, (void *)*fdata);
-				sdata = strdup(sbuf);
+			} else {
 //				fprintf(stderr, "Loop serialized struct data: [%s]\n", sdata);
 				free(dbuf);
 
@@ -458,17 +292,30 @@ client_socket_loop(void *arg) {
 	return 0;
 }
 
-
-int _gomod_init(void)
-{
+/*
+ * This function takes one parameter:
+ * a pointer to the start of the golang function table that the
+ * injected module will need to be able to initialize its thread
+ * and heap state and call native golang serializer functions.
+ * This table is copied over from the heap of the tracing process.
+ */
+int
+_gomod_init(void *data) {
 	struct sigaction sa;
 	struct sockaddr_un s_un;
 	socklen_t ssize;
 	char *gotrace_socket_path = NULL;
 	int fd;
 
-	fprintf(stderr, "Loop outer (%d)\n", gettid());
+	fprintf(stderr, "Loop outer (%d) / %p\n", gettid(), data);
 
+	all_gofuncs = data;
+/*	while (all_gofuncs[i].func_name[0]) {
+		fprintf(stderr, "XXX: client received gofunc table entry %s -> %p\n", all_gofuncs[i].func_name, all_gofuncs[i].address);
+		i++;
+	}
+
+*/
 
 	memset(&sa, 0, sizeof(struct sigaction));
 	sigemptyset(&sa.sa_mask);
@@ -478,16 +325,6 @@ int _gomod_init(void)
 
 	if (sigaction(SIGSEGV, &sa, NULL) == -1)
 		PERROR("sigaction");
-
-
-//	char *rx = call_golang_func_str((void *)0x000000000402100, (void *)0xc0debabe);
-//	fprintf(stderr, "Loop result heh = %p\n", rx);
-
-/*	sleep(1);
-	fprintf(stderr, "XXX trying\n");
-	unsigned long taddr;
-	unsigned long iret = set_intercept_redirect((void *)0x0000000000402d60, &taddr);
-	fprintf(stderr, "XXX: iret = %lx / trapping at %lx\n", iret, taddr);*/
 
 	if (!(gotrace_socket_path = getenv(GOTRACE_SOCKET_ENV))) {
 		static char spath[128];

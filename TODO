@@ -3,11 +3,9 @@ can slice be read in before pass-off to arch-general display funcs?
 complex and float type missing... but who cares for now? float probably easier to implement...
 prevent crashy vma copy by halting memcpy() at brk() limit?
 * collapsing is broken
-remove worthless libelf dependency
+* remove worthless libelf dependency
+* collapse duplicate bytes in string or slice view
 
 
 Major updates needed:
 	1. Function hooking should use allocated jmpbufs instead of replace-and-single-step
-	2. Get cgo calling working again
-		*a. try increasing stack size
-		b. Try setting _cgo_sys_thread_create_addr = NULL

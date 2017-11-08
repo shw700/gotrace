@@ -455,7 +455,7 @@ read_string_remote(pid_t pid, char *addr, size_t slen) {
 }
 
 static void *get_value(struct lt_config_shared *cfg, struct lt_arg *arg, pid_t target,
-	struct user_regs_struct *regs, size_t offset, size_t *psize, size_t *next_off, int *err)
+	struct user_regs_struct *regs, size_t offset, size_t *psize, size_t *next_off, int *err, int fixed)
 {
 //	void *pval = NULL;
 	long val, sp_off = regs->rsp;
@@ -465,7 +465,7 @@ static void *get_value(struct lt_config_shared *cfg, struct lt_arg *arg, pid_t t
 	*err = 1;
 
 	/* Skip the return value for first parameter */
-	if (!offset)
+	if (!fixed && !offset)
 		extra_off += sizeof(void *);
 
 	sp_off += offset + extra_off;
@@ -787,7 +787,7 @@ int lt_stack_process(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 			int is_err;
 
 //			size_t old = cur_off;
-			pval = get_value(cfg, arg, target, regs, cur_off, NULL, &cur_off, &is_err);
+			pval = get_value(cfg, arg, target, regs, cur_off, NULL, &cur_off, &is_err, 0);
 //			fprintf(stderr, "HEH: started with %zu, ended with %zu (%x)\n", old, cur_off
 			targs[i-1] = pval;
 		}
@@ -850,7 +850,7 @@ int lt_stack_process(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 		struct lt_arg *arg = asym->args[i];
 		int last = (i + 1) == asym->argcnt, is_err;
 
-		pval = get_value(cfg, arg, target, regs, cur_off, &psize, &cur_off, &is_err);
+		pval = get_value(cfg, arg, target, regs, cur_off, &psize, &cur_off, &is_err, 0);
 
 		if (!is_err && arg->latrace_custom_struct_transformer && (!arg->fmt || !*(arg->fmt))) {
 			void *pvald = *((void**) pval);
@@ -955,6 +955,26 @@ int lt_stack_process_ret(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 
 	}
 
+	for (i = 0; i < sizeof(argument_watchlist)/sizeof(argument_watchlist[0]); i++) {
+
+		if (argument_watchlist[i].do_exit && (!strcmp(argument_watchlist[i].funcname, asym->name))) {
+			void *stack_data;
+
+			stack_data = read_string_remote(target, (void *)regs->rsp + ret_offset, argument_watchlist[i].nbytes);
+
+			if (!stack_data) {
+				PRINT_ERROR("Error reading debug bytes from stack for function entry point: %s\n", asym->name);
+				break;
+			}
+
+			stack_dump(stack_data, argument_watchlist[i].nbytes, 4);
+			free(stack_data);
+			break;
+		}
+
+	}
+
+
 /*	if (ret_offset != asym->stacksz) {
 		PRINT_ERROR("Warning: stack size mismatch for %s() between calculations and expectations: %zu vs %u bytes\n",
 			asym->name, ret_offset, asym->stacksz);
@@ -965,7 +985,13 @@ int lt_stack_process_ret(struct lt_config_shared *cfg, struct lt_args_sym *asym,
 		int last = (i == asym->rargcnt-1), is_err;
 
 		arg = asym->ret_args[i];
-		pval = get_value(cfg, arg, target, regs, ret_offset, &psize, &ret_offset, &is_err);
+		pval = get_value(cfg, arg, target, regs, ret_offset, &psize, &ret_offset, &is_err, 0);
+
+		// XXX: This is a stop-gap special condition fix. This sorely needs to be fixed.
+		if (asym->rargcnt == 1) {
+			ret_offset = 0;
+			pval = get_value(cfg, arg, target, regs, ret_offset, &psize, &ret_offset, &is_err, 1);
+		}
 
 /*		if (is_err) {
 			PRINT_ERROR("Unexpected error occurred decoding return value from function!\n");
