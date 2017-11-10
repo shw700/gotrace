@@ -59,6 +59,7 @@ size_t n_unresolved_interfaces = 0;
 #define INTERCEPT_RETONLY	0x1
 #define INTERCEPT_JMP		0x2
 #define INTERCEPT_CALL		0x4
+#define INTERCEPT_STACK_MOD	0x8
 
 typedef struct remote_intercept {
 	void *addr;
@@ -70,6 +71,7 @@ typedef struct remote_intercept {
 	void *retaddr;
 	unsigned char saved_prolog[16];
 	unsigned short saved_prolog_len;
+	unsigned short stack_off;
 } remote_intercept_t;
 
 size_t remote_intercept_nentries = 512;
@@ -98,6 +100,8 @@ char *excluded_intercepts[] = {
 
 	"runtime.checkASM",
 	"runtime.morestack_noctxt",
+
+	"runtime.deferreturn",
 };
 
 pid_t master_pid = -1, socket_pid = -1;
@@ -539,6 +543,84 @@ check_remote_intercept(pid_t pid, void *pc, struct user_regs_struct *regs) {
 					nregs.rip = *jpc;
 					PTRACE(PTRACE_SETREGS, pid, 0, &nregs, EXIT_FAILURE, PT_FATAL);
 					return 0;
+				} else if (remote_intercepts[i].flags & INTERCEPT_STACK_MOD) {
+					size_t ctr;
+					int final_trace = 0, first_step = 1;
+
+					// Display the function entry point here since we won't be doing it later.
+					lts = lt_symbol_bind(cfg.sh, pc, symname);
+					lt_tsd_t *tsdx = thread_get_tsd(pid, 1);
+					sym_entry(symname, lts, "from", "", pid, regs, tsdx);
+
+					// First, steer us into our jump buffer.
+					if (!(res = save_remote_intercept(pid, symname, remote_intercepts[i].addr, (void *)retaddr, 0))) {
+						PRINT_ERROR("Error setting function return intercept for: %s\n", remote_intercepts[i].fname);
+						exit(EXIT_FAILURE);
+					}
+
+					PTRACE(PTRACE_GETREGS, pid, 0, &nregs, EXIT_FAILURE, PT_FATAL);
+					nregs.rip = (unsigned long)res;
+					PTRACE(PTRACE_SETREGS, pid, 0, &nregs, EXIT_FAILURE, PT_FATAL);
+
+					// Step forward until we skip over our intercept code back into the function.
+					for (ctr = 0; ctr < 64; ctr++) {
+						unsigned long cur_i;
+						unsigned char *cb = (unsigned char *)&cur_i;
+						int ws;
+
+						PTRACE(PTRACE_SINGLESTEP, pid, 0, 0, EXIT_FAILURE, PT_FATAL);
+
+						if (waitpid(pid, &ws, __WALL) < 0) {
+							perror_pid("waitpid", pid);
+							exit(EXIT_FAILURE);
+						}
+
+						if (WIFSIGNALED(ws)) {
+							PRINT_ERROR("Error: traced process %d was unexpectedly signaled\n", pid);
+							exit(EXIT_FAILURE);
+						} else if (WIFEXITED(ws)) {
+							PRINT_ERROR("Error: traced process %d unexpectedly exited\n", pid);
+							exit(EXIT_FAILURE);
+						} else if (WIFSTOPPED(ws) && WSTOPSIG(ws) != SIGTRAP) {
+							PRINT_ERROR("Error: traced process %d unexpectedly stopped on signal %d\n",
+								pid, WSTOPSIG(ws));
+							dump_instruction_state(pid);
+							exit(EXIT_FAILURE);
+						}
+
+						PTRACE(PTRACE_GETREGS, pid, 0, &nregs, EXIT_FAILURE, PT_FATAL);
+
+						// The first instruction of the jump buffer is where we need to
+						// undo the stack allocation we're working around.
+						if (first_step) {
+							first_step = 0;
+							nregs.rsp += remote_intercepts[i].stack_off;
+							PTRACE(PTRACE_SETREGS, pid, 0, &nregs, EXIT_FAILURE, PT_FATAL);
+						}
+
+						if (final_trace)
+							final_trace++;
+
+						if (final_trace == 2)
+							break;
+
+						PTRACE_PEEK(cur_i, PTRACE_PEEKTEXT, pid, nregs.rip, EXIT_FAILURE, PT_FATAL);
+
+						// The unique instruction at the end of our sled: callq  *-0x8(%rsp)
+						if ((cb[0] == 0xff) && (cb[1] == 0x54) && (cb[2] == 0x24) && (cb[3] == 0xf8))
+							final_trace = 1;
+					}
+
+					if (final_trace < 2) {
+						PRINT_ERROR("Unknown error stepping through traced function %s\n", symname);
+						exit(EXIT_FAILURE);
+					}
+
+					// We are at the second (REAL) instruction, which may expect the "real" stack pointer.
+					// Redo the original stack change and we should be good to go.
+					nregs.rsp -= remote_intercepts[i].stack_off;
+					PTRACE(PTRACE_SETREGS, pid, 0, &nregs, EXIT_FAILURE, PT_FATAL);
+					return 0;
 				}
 
 				if (!(res = save_remote_intercept(pid, symname, remote_intercepts[i].addr, (void *)retaddr, 0))) {
@@ -949,6 +1031,8 @@ save_remote_intercept(pid_t pid, const char *fname, void *addr, void *raddr, int
 
 	}
 
+	memset(&remote_intercepts[remote_intercept_entries], 0, sizeof(remote_intercepts[0]));
+
 	PTRACE_PEEK(old_prolog, PTRACE_PEEKTEXT, pid, addr, NULL, PT_RETERROR);
 	tptr = (unsigned char *)&old_prolog;
 
@@ -979,8 +1063,12 @@ save_remote_intercept(pid_t pid, const char *fname, void *addr, void *raddr, int
 //		return is_entry ? ((void *)-1) : NULL;
 		iflags |= INTERCEPT_RETONLY;
 	} else if ((tptr[0] == 0x48) && (tptr[1] == 0x83) && (tptr[2] == 0xec)) {
-		PRINT_ERROR("Warning: cannot intercept function %s at %p because it leads with a stack change operation\n", fname, addr);
-		return is_entry ? ((void *)-1) : NULL;
+		size_t stack_dec = tptr[3];
+
+//		PRINT_ERROR("Warning: cannot intercept function %s at %p because it leads with a stack change operation\n", fname, addr);
+
+		iflags |= INTERCEPT_STACK_MOD;
+		remote_intercepts[remote_intercept_entries].stack_off = stack_dec;
 	}
 
 	if (is_entry) {
@@ -991,7 +1079,8 @@ save_remote_intercept(pid_t pid, const char *fname, void *addr, void *raddr, int
 
 		if (iflags)
 			remote_intercepts[remote_intercept_entries].flags = iflags;
-		else {
+
+		if (!iflags || (iflags == INTERCEPT_STACK_MOD)) {
 
 			if (!(first_i = get_first_instruction_remote(pid, addr, &to_copy))) {
 				PRINT_ERROR("%s", "Error: could not set up jump buffer for remote function intercept\n");

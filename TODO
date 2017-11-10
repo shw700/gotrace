@@ -7,8 +7,8 @@ prevent crashy vma copy by halting memcpy() at brk() limit?
 Special jmpbuf problems resolved:
 	jmp instruction
 	immediate ret
-jmpbuf problems remaining:
 	call instruction
-	rip-relative addressing
 	modification of rsp
+jmpbuf problems remaining:
+	RIP-relative addressing
 	*unknown* - require explicit exclusions
