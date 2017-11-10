@@ -56,10 +56,13 @@ size_t ngolang_ifaces = 0;
 size_t n_unresolved_interfaces = 0;
 
 
+#define INTERCEPT_RETONLY	0x1
+
 typedef struct remote_intercept {
 	void *addr;
 	char *fname;
 	int is_entry;
+	unsigned short flags;
 	void *jmpbuf;
 	unsigned short jblen;
 	void *retaddr;
@@ -79,22 +82,18 @@ struct lt_config_audit cfg;
 char gotrace_socket_path[128];
 
 char *excluded_intercepts[] = {
+	"_rt0_amd64_linux",
+	"main",
+	"runtime.rt0_go",
+
 	"main.main",
 	"runtime.init.2",
 	"runtime.main",
 	"runtime.init",
 	"runtime.morestack",
-	"fmt.Fprintln",
-	"fmt.Println",
-//	"fmt.(*pp).printArg",
-	"fmt.\\(\\*pp\\).printArg",
-//	"fmt.(*pp).printValue",
-	"fmt.\\(\\*pp\\).printValue",
+	"fmt.*[pP]rintln",
 	"fmt.\\(\\*pp\\).*",
 
-	"_rt0_amd64_linux",
-	"main",
-	"runtime.rt0_go",
 	"runtime.checkASM",
 	"runtime.morestack_noctxt",
 };
@@ -491,6 +490,23 @@ check_remote_intercept(pid_t pid, void *pc, struct user_regs_struct *regs) {
 
 				PTRACE_PEEK(retaddr, PTRACE_PEEKTEXT, pid, regs->rsp, -1, PT_RETERROR);
 
+				if (remote_intercepts[i].flags & INTERCEPT_RETONLY) {
+					lt_tsd_t *tsdx = thread_get_tsd(pid, 1);
+					size_t nc = 0;
+
+					lt_out_entry(cfg.sh, NULL, pid, tsdx->indent_depth+1, COLLAPSED_BARE,
+						symname, "", "", "[untraced function returns immediately]", "", &nc);
+					lt_out_exit(cfg.sh, NULL, pid, tsdx->indent_depth+1, COLLAPSED_BARE,
+						symname, "", "", "", "", &nc);
+
+					// Simulate a return by popping return address and redirecting flow.
+					PTRACE(PTRACE_GETREGS, pid, 0, &nregs, EXIT_FAILURE, PT_FATAL);
+					nregs.rsp += sizeof(void *);
+					nregs.rip = retaddr;
+					PTRACE(PTRACE_SETREGS, pid, 0, &nregs, EXIT_FAILURE, PT_FATAL);
+					return 0;
+				}
+
 				if (!(res = save_remote_intercept(pid, symname, remote_intercepts[i].addr, (void *)retaddr, 0))) {
 					PRINT_ERROR("Error setting function return intercept for: %s; resetting trap.\n", remote_intercepts[i].fname);
 					exit(EXIT_FAILURE);
@@ -869,6 +885,7 @@ save_remote_intercept(pid_t pid, const char *fname, void *addr, void *raddr, int
 	unsigned long old_prolog;
 	unsigned char *tptr;
 	unsigned char *saved_ibuf = NULL;
+	unsigned short iflags = 0;
 	size_t i, jblen;
 
 	if (remote_intercept_entries == remote_intercept_nentries) {
@@ -908,8 +925,9 @@ save_remote_intercept(pid_t pid, const char *fname, void *addr, void *raddr, int
 		PRINT_ERROR("Warning: cannot intercept function %s at %p because it leads with a jump instruction\n", fname, addr);
 		return is_entry ? ((void *)-1) : NULL;
 	} else if (*tptr == 0xc3) {
-		PRINT_ERROR("Warning: cannot intercept function %s at %p because it leads with a return\n", fname, addr);
-		return is_entry ? ((void *)-1) : NULL;
+//		PRINT_ERROR("Warning: cannot intercept function %s at %p because it leads with a return\n", fname, addr);
+		iflags |= INTERCEPT_RETONLY;
+//		return is_entry ? ((void *)-1) : NULL;
 	} else if ((tptr[0] == 0x48) && (tptr[1] == 0x83) && (tptr[2] == 0xec)) {
 		PRINT_ERROR("Warning: cannot intercept function %s at %p because it leads with a stack change operation\n", fname, addr);
 		return is_entry ? ((void *)-1) : NULL;
@@ -921,22 +939,28 @@ save_remote_intercept(pid_t pid, const char *fname, void *addr, void *raddr, int
 
 //		fprintf(stderr, "XXX: skipping jump buf redirect for function entry point: %s\n", fname);
 
-		if (!(first_i = get_first_instruction_remote(pid, addr, &to_copy))) {
-			PRINT_ERROR("%s", "Error: could not set up jump buffer for remote function intercept\n");
-			return NULL;
-		} else if (to_copy > sizeof(remote_intercepts[remote_intercept_entries].saved_prolog)) {
-			PRINT_ERROR("Error: read instruction was bigger than max size at %zu bytes\n", to_copy);
+		if (iflags)
+			remote_intercepts[remote_intercept_entries].flags = iflags;
+		else {
+
+			if (!(first_i = get_first_instruction_remote(pid, addr, &to_copy))) {
+				PRINT_ERROR("%s", "Error: could not set up jump buffer for remote function intercept\n");
+				return NULL;
+			} else if (to_copy > sizeof(remote_intercepts[remote_intercept_entries].saved_prolog)) {
+				PRINT_ERROR("Error: read instruction was bigger than max size at %zu bytes\n", to_copy);
+				free(first_i);
+				return NULL;
+			}
+
+			// It's easier if we copy the entire 16 bytes, though, since we cannot write back any
+			// less than that with ptrace() with minimal overhead.
+//			memcpy(remote_intercepts[remote_intercept_entries].saved_prolog, first_i, to_copy);
+			memcpy(remote_intercepts[remote_intercept_entries].saved_prolog, first_i,
+				sizeof(remote_intercepts[remote_intercept_entries].saved_prolog));
 			free(first_i);
-			return NULL;
+			remote_intercepts[remote_intercept_entries].saved_prolog_len = to_copy;
 		}
 
-		// It's easier if we copy the entire 16 bytes, though, since we cannot write back any
-		// less than that with ptrace() with minimal overhead.
-//		memcpy(remote_intercepts[remote_intercept_entries].saved_prolog, first_i, to_copy);
-		memcpy(remote_intercepts[remote_intercept_entries].saved_prolog, first_i,
-			sizeof(remote_intercepts[remote_intercept_entries].saved_prolog));
-		free(first_i);
-		remote_intercepts[remote_intercept_entries].saved_prolog_len = to_copy;
 		remote_intercepts[remote_intercept_entries].jmpbuf = NULL;
 		remote_intercepts[remote_intercept_entries].jblen = 0;
 	} else {
