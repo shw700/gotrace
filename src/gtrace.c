@@ -58,6 +58,7 @@ size_t n_unresolved_interfaces = 0;
 
 #define INTERCEPT_RETONLY	0x1
 #define INTERCEPT_JMP		0x2
+#define INTERCEPT_CALL		0x4
 
 typedef struct remote_intercept {
 	void *addr;
@@ -506,22 +507,35 @@ check_remote_intercept(pid_t pid, void *pc, struct user_regs_struct *regs) {
 					nregs.rip = retaddr;
 					PTRACE(PTRACE_SETREGS, pid, 0, &nregs, EXIT_FAILURE, PT_FATAL);
 					return 0;
-				} else if (remote_intercepts[i].flags & INTERCEPT_JMP) {
+				} else if (remote_intercepts[i].flags & (INTERCEPT_JMP | INTERCEPT_CALL)) {
 					char jdesc[128];
 					lt_tsd_t *tsdx = thread_get_tsd(pid, 1);
 					unsigned long *jpc;
+					char *verb = remote_intercepts[i].flags & INTERCEPT_JMP ?
+						"redirects to" : "calls";
 					size_t nc = 0;
 
 					jpc = (unsigned long *)remote_intercepts[i].saved_prolog;
-					snprintf(jdesc, sizeof(jdesc), "[untraced function redirects to next func@%p]", (void *)*jpc);
+					snprintf(jdesc, sizeof(jdesc), "[untraced function %s next func@%p]",
+						verb, (void *)*jpc);
 
 					lt_out_entry(cfg.sh, NULL, pid, tsdx->indent_depth+1, COLLAPSED_BARE,
 						symname, "", "", jdesc, "", &nc);
 					lt_out_exit(cfg.sh, NULL, pid, tsdx->indent_depth+1, COLLAPSED_BARE,
 						symname, "", "", " ", "", &nc);
 
-					// Simulate the jump manually.
+					// Simulate the execution flow redirection manually.
 					PTRACE(PTRACE_GETREGS, pid, 0, &nregs, EXIT_FAILURE, PT_FATAL);
+
+					// If it's a call, the return address needs to be stashed as expected.
+					if (remote_intercepts[i].flags & INTERCEPT_CALL) {
+						nregs.rsp -= sizeof(void *);
+						// The real instruction, which is a 5 byte call instruction,
+						// starts right after us, but we are sitting one byte ahead,
+						// after a trap instruction.
+						PTRACE(PTRACE_POKEDATA, pid, nregs.rsp, nregs.rip+4, EXIT_FAILURE, PT_FATAL);
+					}
+
 					nregs.rip = *jpc;
 					PTRACE(PTRACE_SETREGS, pid, 0, &nregs, EXIT_FAILURE, PT_FATAL);
 					return 0;
@@ -938,7 +952,15 @@ save_remote_intercept(pid_t pid, const char *fname, void *addr, void *raddr, int
 	PTRACE_PEEK(old_prolog, PTRACE_PEEKTEXT, pid, addr, NULL, PT_RETERROR);
 	tptr = (unsigned char *)&old_prolog;
 
-	if ((*tptr == 0xe8) || (*tptr == 0xff) || (*tptr == 0x9a)) {
+	if (*tptr == 0xe8) {
+		int32_t *offset;
+		unsigned long new_target;
+
+		iflags |= INTERCEPT_CALL;
+		offset = (int32_t *)(&tptr[1]);
+		new_target = (unsigned long)addr + *offset + 5;
+		memcpy(&remote_intercepts[remote_intercept_entries].saved_prolog, &new_target, sizeof(new_target));
+	} else if ((*tptr == 0xff) || (*tptr == 0x9a)) {
 		PRINT_ERROR("Warning: cannot intercept function %s at %p because it leads with a call instruction\n", fname, addr);
 		return is_entry ? ((void *)-1) : NULL;
 	} else if (*tptr == 0xe9) {
