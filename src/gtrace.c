@@ -60,6 +60,7 @@ size_t n_unresolved_interfaces = 0;
 #define INTERCEPT_JMP		0x2
 #define INTERCEPT_CALL		0x4
 #define INTERCEPT_STACK_MOD	0x8
+#define INTERCEPT_NO_RETURN	0x16
 
 typedef struct remote_intercept {
 	void *addr;
@@ -86,9 +87,7 @@ struct lt_config_audit cfg;
 char gotrace_socket_path[128];
 
 char *excluded_intercepts[] = {
-	"_rt0_amd64_linux",
-	"main",
-	"runtime.rt0_go",
+	"main",		// RIP-relative addressing
 
 	"main.main",
 	"runtime.init.2",
@@ -101,7 +100,7 @@ char *excluded_intercepts[] = {
 	"runtime.checkASM",
 	"runtime.morestack_noctxt",
 
-	"runtime.deferreturn",
+	"runtime.deferreturn",	// RIP-relative addressing
 };
 
 pid_t master_pid = -1, socket_pid = -1;
@@ -477,6 +476,7 @@ check_remote_intercept(pid_t pid, void *pc, struct user_regs_struct *regs) {
 	unsigned long new_pc;
 	char *symname;
 	size_t i;
+	int not_returning = 0;
 
 	for (i = 0; i < remote_intercept_entries; i++) {
 		int match = ((remote_intercepts[i].is_entry && (remote_intercepts[i].addr == pc)) ||
@@ -623,6 +623,9 @@ check_remote_intercept(pid_t pid, void *pc, struct user_regs_struct *regs) {
 					return 0;
 				}
 
+				if (!retaddr)
+					not_returning = 1;
+
 				if (!(res = save_remote_intercept(pid, symname, remote_intercepts[i].addr, (void *)retaddr, 0))) {
 					PRINT_ERROR("Error setting function return intercept for: %s; resetting trap.\n", remote_intercepts[i].fname);
 					exit(EXIT_FAILURE);
@@ -640,15 +643,25 @@ check_remote_intercept(pid_t pid, void *pc, struct user_regs_struct *regs) {
 				regs->rsp += 8;
 			}
 
-			lts = lt_symbol_bind(cfg.sh, pc, symname);
-			lt_tsd_t *tsdx = thread_get_tsd(pid, 1);
+			if (not_returning) {
+				lt_tsd_t *tsdx = thread_get_tsd(pid, 1);
+				size_t nc = 0;
 
-			if (remote_intercepts[i].is_entry)
-				ret = sym_entry(symname, lts, "from", "", pid, regs, tsdx);
-			else
-				ret = sym_exit(symname, lts, "from", "", pid, regs, regs, tsdx);
+				lt_out_entry(cfg.sh, NULL, pid, tsdx->indent_depth+1, 0,
+					symname, "", "", "non-returning function ...", "", &nc);
 
-			if (ret < 0) {
+			} else {
+				lts = lt_symbol_bind(cfg.sh, pc, symname);
+				lt_tsd_t *tsdx = thread_get_tsd(pid, 1);
+
+				if (remote_intercepts[i].is_entry)
+					ret = sym_entry(symname, lts, "from", "", pid, regs, tsdx);
+				else
+					ret = sym_exit(symname, lts, "from", "", pid, regs, regs, tsdx);
+
+				if (ret < 0) {
+				}
+
 			}
 
 			PTRACE(PTRACE_GETREGS, pid, 0, &nregs, EXIT_FAILURE, PT_FATAL);
@@ -1020,12 +1033,16 @@ save_remote_intercept(pid_t pid, const char *fname, void *addr, void *raddr, int
 
 		if ((remote_intercepts[i].addr == addr) && (remote_intercepts[i].retaddr == raddr)) {
 
-			if (is_entry)
-				return ((void *)-1);
-			else
-				return remote_intercepts[i].jmpbuf;
+			if (is_entry == remote_intercepts[i].is_entry) {
+				if (is_entry)
+					return ((void *)-1);
+				else
+					return remote_intercepts[i].jmpbuf;
+			}
 
-		} else if ((remote_intercepts[i].addr == addr) && !is_entry && remote_intercepts[i].is_entry) {
+		}
+
+		if ((remote_intercepts[i].addr == addr) && !is_entry && remote_intercepts[i].is_entry) {
 			saved_ibuf = remote_intercepts[i].saved_prolog;
 		}
 
@@ -1104,7 +1121,9 @@ save_remote_intercept(pid_t pid, const char *fname, void *addr, void *raddr, int
 		remote_intercepts[remote_intercept_entries].jblen = 0;
 	} else {
 
-		if (!saved_ibuf) {
+		if (!raddr) {
+			remote_intercepts[remote_intercept_entries].flags |= INTERCEPT_NO_RETURN;
+		} else if (!saved_ibuf) {
 			PRINT_ERROR("Error creating return jump buffer for function %s: could not find entry point\n", fname);
 			return NULL;
 		}
@@ -1230,6 +1249,32 @@ create_jmp(pid_t pid, void *ataddr, void *raddr, void *ibuf, void *outbuf, size_
 	retaddr = (unsigned long)raddr;
 	ret_hi = (((unsigned long)retaddr) & 0xffffffff00000000) >> 32;
 	ret_lo = (((unsigned long)retaddr) & 0x00000000ffffffff);
+
+	// No return address is a special case. Never look back...
+	if (!raddr) {
+#define OFFSET_NORET_CONT_HI	5
+#define OFFSET_NORET_CONT_LO	12
+		unsigned char no_return_bytes[] = { 0x50,
+			0xc7, 0x44, 0x24, 0x04, 0x44, 0x33, 0x22, 0x11,
+			0xc7, 0x04, 0x24, 0x88, 0x77, 0x66, 0x55,
+			0xc3, 0xcc };
+
+/*
+		push   %rax
+		movl   $0x11223344,0x4(%rsp)
+		movl   $0x55667788,(%rsp)
+		retq
+		int3
+*/
+
+		memcpy(&no_return_bytes[OFFSET_NORET_CONT_HI], &cont_hi, sizeof(cont_hi));
+		memcpy(&no_return_bytes[OFFSET_NORET_CONT_LO], &cont_lo, sizeof(cont_lo));
+
+		memcpy(outptr, no_return_bytes, sizeof(no_return_bytes));
+		*outlen += sizeof(no_return_bytes);
+		return 0;
+	}
+
 
 #define OFFSET_WORD_CONT_HI	8
 #define OFFSET_WORD_CONT_LO	16
