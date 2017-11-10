@@ -2,9 +2,12 @@ remove transformer call stacks?
 can slice be read in before pass-off to arch-general display funcs?
 complex and float type missing... but who cares for now? float probably easier to implement...
 prevent crashy vma copy by halting memcpy() at brk() limit?
-* collapsing is broken
 * remove worthless libelf dependency
 
-
-Major updates needed:
-	1. Function hooking should use allocated jmpbufs instead of replace-and-single-step
+jmpbuf problems:
+	call instruction
+	jmp instruction
+	rip-relative addressing
+	immediate ret
+	modification of rsp
+	*unknown* - explicit exclusions

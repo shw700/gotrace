@@ -132,7 +132,7 @@ call_remote_lib_func(pid_t pid, void *faddr, uintptr_t r1, uintptr_t r2, uintptr
 
 	if (MAGIC_FUNCTION && (void *)MAGIC_FUNCTION == faddr) {
 		fprintf(stderr, "Starting trace at magic function: %p\n", faddr);
-		trace_forever(pid);
+		trace_forever(pid, 0);
 		PRINT_ERROR("%s", "Magic function trace ended... exiting.\n");
 		exit(EXIT_SUCCESS);
 	}
@@ -1877,6 +1877,55 @@ check_vma_collision(pid_t pid1, pid_t pid2, int exclude_vsyscall, int exclude_se
 
 	DESTROY_VMAP(vr1, MAX_REPLICATE_VMA);
 	DESTROY_VMAP(vr2, MAX_REPLICATE_VMA);
+	return ret;
+}
+
+/*
+ * Allocate an rwx memory buffer of size nbytes right before the
+ * first virtual memory area (text segment) of the target process.
+ */
+void *
+alloc_memory_before_vma(pid_t pid, size_t nbytes) {
+	unsigned long base;
+	vmap_region_t vr[MAX_REPLICATE_VMA];
+	char exename[PATH_MAX+1], exelookup[32];
+	size_t i;
+	void *ret = NULL;
+
+	if (parse_process_maps(pid, vr, MAX_REPLICATE_VMA) < 0)
+		return NULL;
+
+	memset(exename, 0, sizeof(exename));
+	snprintf(exelookup, sizeof(exelookup), "/proc/%d/exe", pid);
+
+	if (!(realpath(exelookup, exename))) {
+		PERROR("realpath");
+		return NULL;
+	}
+
+	for (i = 0; (i < MAX_REPLICATE_VMA) && (vr[i].end != 0); i++) {
+
+		if (!vr[i].objname || (strcmp(vr[i].objname, exename)))
+			continue;
+
+		if (!(vr[i].prot & PROT_EXEC))
+			continue;
+
+//		fprintf(stderr, "XXX: FOUND: %p <-> %p\n", (void *)vr[i].start, (void *)vr[i].end);
+		base = (vr[i].start - nbytes) & ~(4096-1);
+		base -= 4096;
+		nbytes = (nbytes + 4095) & ~(4096-1);
+//		fprintf(stderr, "XXX: TRYING %zu @ %p\n", nbytes, (void *)base);
+
+		if ((ret = mmap((void *)base, nbytes, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_ANONYMOUS|MAP_PRIVATE, 0, 0)) == MAP_FAILED) {
+			PERROR("mmap");
+			break;
+		}
+
+		break;
+	}
+
+	DESTROY_VMAP(vr, MAX_REPLICATE_VMA);
 	return ret;
 }
 

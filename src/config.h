@@ -311,10 +311,11 @@ int replicate_process_remotely(pid_t pid, int **shmids);
 void *replicate_environ(pid_t pid);
 void *resolve_local_symbol(const char *libpath, const char *funcname);
 int flash_remote_library_memory(pid_t pid, const char *dsopath);
+void *alloc_memory_before_vma(pid_t pid, size_t nbytes);
 
 void dump_wait_state(pid_t pid, int status, int force);
 int dump_instruction_state(pid_t pid);
-int trace_forever(pid_t pid);
+int trace_forever(pid_t pid, int verbose);
 char *read_bytes_remote(pid_t pid, char *addr, size_t slen);
 int write_bytes_remote(pid_t pid, void *addr, void *buf, size_t blen);
 int check_vma_collision(pid_t pid1, pid_t pid2, int exclude_vsyscall, int exclude_self);

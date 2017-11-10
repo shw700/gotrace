@@ -199,8 +199,13 @@ fabricate_fs_base(int alloc_new, void **mout) {
 	if (!alloc_new && _last)
 		return _last;
 
-	if (!(buf = malloc(BSIZE))) {
-		perror("malloc");
+	// Seems like a direct syscall is ultimately less likely to lead to TLS-related instability.
+//	if (!(buf = malloc(BSIZE))) {
+//		perror("malloc");
+//		return NULL;
+//	}
+	if ((buf = mmap(NULL, BSIZE, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, 0, 0)) == MAP_FAILED) {
+		PERROR("mmap");
 		return NULL;
 	}
 

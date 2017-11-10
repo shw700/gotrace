@@ -17,6 +17,9 @@ golang_func_t golang_function_table[] = {
 //	{ "runtime.gcinit",			NULL, 0, 1, "" },
 	{ "runtime.procresize",			NULL, 0xd, 1, "" },
 	{ "main.gotrace_print_net__TCPConn",	NULL, 0xdeadbeef, 0, "net.TCPConn" },
+// Should be m and g, respectively.
+	{ "main.gotrace_print_m_area",		NULL, 0xdeadbeef, 0, "mz" },
+	{ "main.gotrace_print_g_area",		NULL, 0xdeadbeef, 0, "gz" },
 	{ "", 					NULL, 0, 0, "" }
 };
 

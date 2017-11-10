@@ -1594,13 +1594,25 @@ static char *massage_string(const unsigned char *s, size_t slen)
 	return result;
 }
 
+int
+test_remote_address(pid_t pid, void *addr) {
+	errno = 0;
+	ptrace(PTRACE_PEEKDATA, pid, addr, 0);
+
+	if (errno != 0)
+		return 0;
+
+	return 1;
+}
+
 static int getstr_pod(struct lt_config_shared *cfg, pid_t pid, int dspname, struct lt_arg *arg,
 			void *pval, size_t psize, char *argbuf, int *arglen)
 {
+	const char *dname1, *dname2;
 	int len = 0, alen = *arglen;
 	int namelen = strlen(arg->name);
 	int is_char = 0;
-	int force_type_id = -1;
+	int force_type_id = -1, pval_valid = 0;
 
 	PRINT_VERBOSE(cfg, 1, "\t arg '%s %s', pval %p, len %d, pointer %d, dtype %d, type_id %d\n",
 			arg->type_name, arg->name, pval, alen, arg->pointer, arg->dtype, arg->type_id);
@@ -1609,6 +1621,12 @@ static int getstr_pod(struct lt_config_shared *cfg, pid_t pid, int dspname, stru
 		return 0;
 
 	*arglen = 0;
+
+	dname1 = dspname ? arg->name : "";
+	dname2 = dspname ? LT_EQUAL : "";
+
+	if ((arg->pointer != 0) && pval)
+		pval_valid = test_remote_address(pid, pval);
 
 #define MAX_SLICE_DISP_SIZE	1024
 	if (arg->pointer == -1) {
@@ -1650,10 +1668,7 @@ static int getstr_pod(struct lt_config_shared *cfg, pid_t pid, int dspname, stru
 	
 	if (arg->real_type_name && (!strcmp(arg->real_type_name, "_type") &&
 			arg->pointer)) {
-		const char *dname1, *dname2, *tname;
-
-		dname1 = dspname ? arg->name : "";
-		dname2 = dspname ? LT_EQUAL : "";
+		const char *tname;
 
 		if ((tname = lookup_interface(pid, pval, 1))) {
 			len = snprintf(argbuf, alen, "%s%s^%s", dname1, dname2, tname);
@@ -1661,10 +1676,7 @@ static int getstr_pod(struct lt_config_shared *cfg, pid_t pid, int dspname, stru
 		}
 	} else if (arg->real_type_name && (!strcmp(arg->real_type_name, "_elem") &&
 			arg->pointer)) {
-		const char *dname1, *dname2, *tname;
-
-		dname1 = dspname ? arg->name : "";
-		dname2 = dspname ? LT_EQUAL : "";
+		const char *tname;
 
 		if ((tname = lookup_interface(pid, pval, 0))) {
 			len = snprintf(argbuf, alen, "%s%s^%s", dname1, dname2, tname);
@@ -1672,14 +1684,14 @@ static int getstr_pod(struct lt_config_shared *cfg, pid_t pid, int dspname, stru
 		}
 	}
 
+	// XXX: do we need a check for ->pointer > 1?
 	if (arg->real_type_name && is_type_serialization_supported(arg->real_type_name)) {
-		const char *dname1, *dname2;
 		char *sres;
 
-		dname1 = dspname ? arg->name : "";
-		dname2 = dspname ? LT_EQUAL : "";
-
-		if ((sres = call_remote_serializer(-1, arg->real_type_name, pval))) {
+		if (!pval_valid) {
+			len = snprintf(argbuf, alen, "%s%s%p***", dname1, dname2, pval);
+			goto out;
+		} else if ((sres = call_remote_serializer(-1, arg->real_type_name, pval))) {
 			len = snprintf(argbuf, alen, "%s%s%s", dname1, dname2, sres);
 			free(sres);
 			goto out;
@@ -1689,10 +1701,6 @@ static int getstr_pod(struct lt_config_shared *cfg, pid_t pid, int dspname, stru
 	if (arg->type_id == LT_ARGS_TYPEID_FNPTR) {
 		void *fn = pval;
 		const char *fname;
-		const char *dname1, *dname2;
-
-		dname1 = dspname ? arg->name : "";
-		dname2 = dspname ? LT_EQUAL : "";
 
 		if (!fn)
 			len = snprintf(argbuf, alen, "%s%sfn@ NULL", dname1, dname2);
@@ -1755,8 +1763,12 @@ static int getstr_pod(struct lt_config_shared *cfg, pid_t pid, int dspname, stru
 					else
 						len = snprintf(argbuf, alen, "%s%s%s", fmt_on, aname, fmt_off);
 
-				} else
-					len = snprintf(argbuf, alen, "%p", ptr);
+				} else {
+					if (pval_valid)
+						len = snprintf(argbuf, alen, "%p", ptr);
+					else
+						len = snprintf(argbuf, alen, "%p*", ptr);
+				}
 			} else
 				len = snprintf(argbuf, alen, "nil");
 		}

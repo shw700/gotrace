@@ -47,9 +47,7 @@ PROGRAMS+= $(GOTRACE_BIN)
 OBJS_DEPS_OMIT+=\
 	src/args-flex.o \
 	src/args-bison.o \
-	src/dlopen_stub.o \
-	src/serializer_mod.o \
-	src/intercept.o
+	src/serializer_mod.o
 
 $(GOTRACE_BIN): $(GOTRACE_OBJS)
 	$(QUIET_LD)$(CC) $(CFLAGS) $(GOTRACE_LDFLAGS) -o $@ $^ $(GOTRACE_LIBS)
@@ -65,9 +63,7 @@ GOMOD_OBJS=\
 	src/gomod.o \
 	src/network.o \
 	src/misc.o \
-	src/dlopen_stub.o \
 	src/serializer_mod.o \
-	src/intercept.o \
 	src/gheap.o
 
 OBJS+=$(GOMOD_OBJS)

@@ -427,14 +427,14 @@ read_string_remote(pid_t pid, char *addr, size_t slen) {
 	char *result, *raddr = addr;
 	size_t nread = 0;
 
-	if (slen) {
+//	if (slen) {
 		if (!(result = xmalloc(slen+1))) {
 			PRINT_ERROR("xmalloc(%zu): %s\n", slen+1, strerror(errno));
 			return NULL;
 		}
 
 		memset(result, 0, slen+1);
-	}
+//	}
 
 	while (nread < slen) {
 		size_t maxwrite;

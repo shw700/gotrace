@@ -16,6 +16,7 @@
 #include <asm/prctl.h>
 #include <sys/prctl.h>
 #include <sys/sem.h>
+#include <regex.h>
 
 // TODO: waitpid(..., WUNTRACED)
 
@@ -55,31 +56,18 @@ size_t ngolang_ifaces = 0;
 size_t n_unresolved_interfaces = 0;
 
 
-typedef struct saved_prolog {
-	void *addr;
-	long saved_prolog;
-	char *fname;
-} saved_prolog_t;
-
 typedef struct remote_intercept {
 	void *addr;
 	char *fname;
 	int is_entry;
+	void *jmpbuf;
+	unsigned short jblen;
+	void *retaddr;
+	unsigned char saved_prolog[16];
+	unsigned short saved_prolog_len;
 } remote_intercept_t;
 
-size_t saved_prolog_nentries = 1024;
-size_t saved_prolog_entries = 0;
-saved_prolog_t *saved_prologs = NULL;
-
-size_t saved_1t_prolog_nentries = 1024;
-size_t saved_1t_prolog_entries = 0;
-saved_prolog_t *saved_1t_prologs = NULL;
-
-size_t saved_ret_prolog_nentries = 64;
-size_t saved_ret_prolog_entries = 0;
-saved_prolog_t *saved_ret_prologs = NULL;
-
-size_t remote_intercept_nentries = 64;
+size_t remote_intercept_nentries = 512;
 size_t remote_intercept_entries = 0;
 remote_intercept_t *remote_intercepts = NULL;
 
@@ -91,19 +79,28 @@ struct lt_config_audit cfg;
 char gotrace_socket_path[128];
 
 char *excluded_intercepts[] = {
-//	"runtime.(*mcache).refill",
-//	"runtime.cgocall",
-/*	"runtime.rawstringtmp",
-	"runtime.slicebytetostring",
-	"net.absDomainName",
-	"net.appendHex"*/
+	"main.main",
+	"runtime.init.2",
+	"runtime.main",
+	"runtime.init",
+	"runtime.morestack",
+	"fmt.Fprintln",
+	"fmt.Println",
+//	"fmt.(*pp).printArg",
+	"fmt.\\(\\*pp\\).printArg",
+//	"fmt.(*pp).printValue",
+	"fmt.\\(\\*pp\\).printValue",
+	"fmt.\\(\\*pp\\).*",
+
+	"_rt0_amd64_linux",
+	"main",
+	"runtime.rt0_go",
+	"runtime.checkASM",
+	"runtime.morestack_noctxt",
 };
 
 pid_t master_pid = -1, socket_pid = -1;
 
-
-#define FLAG_TRAP_INTERRUPTED	0x1
-#define FLAG_TRAP_SYSCALL	0x2
 
 typedef struct process_state {
 	pid_t pid;
@@ -120,19 +117,17 @@ int write_bytes_remote(pid_t pid, void *addr, void *buf, size_t blen);
 void print_instruction(pid_t pid, void *addr, size_t len);
 
 void *call_remote_func(pid_t pid, unsigned char reqtype, void *data, size_t dsize, size_t *psize);
-int call_remote_intercept(pid_t pid, char **funcnames, unsigned long *addresses, size_t naddr, int is_entry);
+void * get_first_instruction_remote(pid_t pid, void *addr, size_t *psize);
+int create_jmp(pid_t pid, void *ataddr, void *raddr, void *ibuf, void *outbuf, size_t *outlen);
 
 void start_listener(void);
 void *gotrace_socket_loop(void *param);
 
 int set_all_intercepts(pid_t pid);
-int set_intercept(pid_t pid, void *addr);
-int set_one_time_intercept(pid_t pid, void *addr);
-int set_ret_intercept(pid_t pid, const char *fname, void *addr, size_t *pidx);
 int is_intercept_excluded(const char *fname);
 int set_pid_flags(pid_t pid, int flags, int do_mask);
 
-int save_remote_intercept(pid_t pid, const char *fname, void *addr, int is_entry);
+void *save_remote_intercept(pid_t pid, const char *fname, void *addr, void *raddr, int is_entry);
 int initialize_remote_library(pid_t pid, const char *libpath, int cont_on_err);
 
 int is_thread_in_syscall(pid_t pid);
@@ -203,6 +198,7 @@ is_pid_monitored(pid_t pid, int *pflags) {
 	return 0;
 }
 
+// Dead code for now.
 int
 set_pid_flags(pid_t pid, int flags, int do_mask) {
 	size_t i;
@@ -251,9 +247,43 @@ cleanup(void) {
 	return;
 }
 
+int
+detach_pids(void) {
+	fprintf(stderr, "Master PID (%d):\n", master_pid);
+	dump_instruction_state(master_pid);
+	fprintf(stderr, "\nSocket PID (%d):\n", socket_pid);
+	dump_instruction_state(socket_pid);
+	PTRACE(PTRACE_SETOPTIONS, master_pid, NULL, 0, 0, PT_DONTFAIL);
+	PTRACE(PTRACE_SETOPTIONS, socket_pid, NULL, 0, 0, PT_DONTFAIL);
+	PTRACE(PTRACE_CONT, master_pid, NULL, NULL, 0, PT_DONTFAIL);
+	PTRACE(PTRACE_CONT, socket_pid, NULL, NULL, 0, PT_DONTFAIL);
+	PTRACE(PTRACE_DETACH, master_pid, NULL, NULL, 0, PT_DONTFAIL);
+	PTRACE(PTRACE_DETACH, socket_pid, NULL, NULL, 0, PT_DONTFAIL);
+	return 0;
+}
+
 void
 handle_int(int signo) {
+	static size_t nint = 0;
+
 	if (signo == SIGINT) {
+		nint++;
+
+		if (nint < 2) {
+			fprintf(stderr, "Caught SIGINT... send once more to terminate program.\n");
+			fprintf(stderr, "Detaching from child.\n");
+			detach_pids();
+
+			fprintf(stderr, "Waiting around...\n");
+			while (1) {
+				sleep(1);
+				fprintf(stderr, ".");
+				fflush(stderr);
+			}
+
+			return;
+		}
+
 		fprintf(stderr, "Caught SIGINT... shutting down gracefully.\n");
 
 		if (master_pid > 0)
@@ -294,9 +324,6 @@ call_remote_func(pid_t pid, unsigned char reqtype, void *data, size_t dsize, siz
 		return NULL;
 	}
 
-	if (first)
-		fprintf(stderr, "XXX: first client pid = %d\n", cpid);
-
 	return result;
 }
 
@@ -315,33 +342,6 @@ call_remote_serializer(pid_t pid, const char *name, void *addr) {
 	result = call_remote_func(pid, GOMOD_RT_SERIALIZE_DATA, reqbuf, reqsize, &outsize);
 
 	return result;
-}
-
-int
-call_remote_intercept(pid_t pid, char **funcnames, unsigned long *addresses, size_t naddr, int is_entry) {
-	void *result;
-	unsigned long *taddr;
-	size_t outsize;
-
-	result = call_remote_func(pid, GOMOD_RT_SET_INTERCEPT, addresses, naddr*sizeof(unsigned long), &outsize);
-	taddr = (unsigned long *)result;
-
-	if (!result) {
-		PRINT_ERROR("%s", "XXX: call remote intercept returned NULL\n");
-		return -1;
-	} else if (!*taddr) {
-		PRINT_ERROR("%s", "Error: remote intercept attempt on function failed!\n");
-		return -1;
-	} else {
-		fprintf(stderr, "XXX: call remote intercept: result = %p / %zu: %p\n", result, outsize, (void *)*taddr);
-
-		if (save_remote_intercept(pid, *funcnames, (void *)*taddr, is_entry) < 0) {
-			PRINT_ERROR("%s", "Unknown error occurred setting remote function intercept\n");
-			return -1;
-		}
-	}
-
-	return 0;
 }
 
 void *
@@ -370,12 +370,8 @@ gotrace_socket_loop(void *param) {
 			PRINT_ERROR("%s", "Error encountered while setting intercepts.\n");
 			exit(EXIT_FAILURE);
 		}
-
-		char *fname = "main.GetConnection";
-		unsigned long readdr = 0x0000000000402d60;
-		int res = call_remote_intercept(-1, &fname, &readdr, 1, 1);
-		fprintf(stderr, "XXX: int res = %d\n", res);
 */
+
 
 
 
@@ -429,6 +425,25 @@ is_intercept_excluded(const char *fname) {
 	size_t i;
 
 	for (i = 0; i < sizeof(excluded_intercepts)/sizeof(excluded_intercepts[0]); i++) {
+
+		if (strstr(excluded_intercepts[i], "*") || strstr(excluded_intercepts[i], "?")) {
+			regex_t regex;
+			int iret;
+
+			if (regcomp(&regex, excluded_intercepts[i], REG_EXTENDED)) {
+				PRINT_ERROR("Error compiling exclusion regex: %s\n", excluded_intercepts[i]);
+				exit(EXIT_FAILURE);
+				continue;
+			}
+
+			if (!(iret = regexec(&regex, fname, 0, NULL, 0))) {
+//				fprintf(stderr, "XXX regex exclusion match: %s | %s\n", excluded_intercepts[i], fname);
+				return 1;
+			}
+
+			regfree(&regex);
+		}
+
 		if (!strcmp(fname, excluded_intercepts[i]))
 			return 1;
 	}
@@ -442,29 +457,55 @@ is_pid_new(pid_t pid) {
 	return 1;
 }
 
+int verify_bp(pid_t pid, void *addr) {
+	unsigned long i;
+	unsigned char *fi = (unsigned char *)&i;
+
+	PTRACE_PEEK(i, PTRACE_PEEKTEXT, pid, addr, 0, PT_RETERROR);
+
+	return (*fi == 0xcc);
+}
+
 int
 check_remote_intercept(pid_t pid, void *pc, struct user_regs_struct *regs) {
 	struct lt_symbol *lts;
+	unsigned long new_pc;
 	char *symname;
 	size_t i;
 
 	for (i = 0; i < remote_intercept_entries; i++) {
-		if (remote_intercepts[i].addr == pc) {
+		int match = ((remote_intercepts[i].is_entry && (remote_intercepts[i].addr == pc)) ||
+			(!remote_intercepts[i].is_entry && (pc >= remote_intercepts[i].jmpbuf) &&
+			(pc <= remote_intercepts[i].jmpbuf+remote_intercepts[i].jblen)));
+
+		if (match) {
+			struct user_regs_struct nregs;
 			int ret;
 
 			symname = remote_intercepts[i].fname;
-			fprintf(stderr, "XXX: OOOOOOOOOOOOH YEAH: %s / %d\n", symname, remote_intercepts[i].is_entry);
+////			fprintf(stderr, "XXX: OOOOOOOOOOOOH YEAH: %s / %d:   %p\n", symname, remote_intercepts[i].is_entry, (void *)regs->rip);
 
 			if (remote_intercepts[i].is_entry) {
 				unsigned long retaddr;
+				void *res;
 
-				PTRACE_PEEK(retaddr, PTRACE_PEEKTEXT, pid, regs->rsp+sizeof(void *), -1, PT_RETERROR);
-				fprintf(stderr, "XXX: YUPP %p\n", (void *)retaddr);
-				int res = call_remote_intercept(pid, &symname, &retaddr, 1, 0);
-				fprintf(stderr, "XXX: res = %d\n", res);
+				PTRACE_PEEK(retaddr, PTRACE_PEEKTEXT, pid, regs->rsp, -1, PT_RETERROR);
 
-				// Now we we must compensate for the size of the extra return address on the stack.
-				regs->rsp += sizeof(void *);
+				if (!(res = save_remote_intercept(pid, symname, remote_intercepts[i].addr, (void *)retaddr, 0))) {
+					PRINT_ERROR("Error setting function return intercept for: %s; resetting trap.\n", remote_intercepts[i].fname);
+					exit(EXIT_FAILURE);
+				} else {
+					new_pc = (unsigned long)res;
+////fprintf(stderr, "ENTRY(%s <- %p) -> %p-~%p\n", symname, (void *)retaddr, res, res+0x2e);
+				}
+
+			} else {
+//				unsigned long retaddr;
+//				PTRACE_PEEK(retaddr, PTRACE_PEEKTEXT, pid, regs->rsp, -1, PT_RETERROR);
+////fprintf(stderr, "EXIT(%s) : %p    returning to %p\n", symname, (void *)regs->rip, (void *)retaddr);
+				new_pc = regs->rip;
+				// XXX: hmm... we need to adjust jmpbuf asm so trap is before stack push.
+				regs->rsp += 8;
 			}
 
 			lts = lt_symbol_bind(cfg.sh, pc, symname);
@@ -475,6 +516,12 @@ check_remote_intercept(pid_t pid, void *pc, struct user_regs_struct *regs) {
 			else
 				ret = sym_exit(symname, lts, "from", "", pid, regs, regs, tsdx);
 
+			if (ret < 0) {
+			}
+
+			PTRACE(PTRACE_GETREGS, pid, 0, &nregs, EXIT_FAILURE, PT_FATAL);
+			nregs.rip = new_pc;
+			PTRACE(PTRACE_SETREGS, pid, 0, &nregs, EXIT_FAILURE, PT_FATAL);
 			return 0;
 		}
 	}
@@ -502,14 +549,8 @@ get_ptrace_event_name(int status) {
 
 int
 handle_trace_trap(pid_t pid, int status, int dont_reset) {
-	struct lt_symbol *lts;
-	void *hot_pc, *hot_sp;
+	void *hot_pc;
 	struct user_regs_struct regs;
-	const char *symname;
-	long retrace, ret_addr;
-	size_t i, ra, argsize, line_no;
-	char *fname = NULL;
-	int pflags, ret, is_return = 0;
 
 /*	if (WIFSTOPPED(status) && WSTOPSIG(status) == SIGUSR1) {
 		fprintf(stderr, "SIGUSR1 OK\n");
@@ -550,196 +591,16 @@ handle_trace_trap(pid_t pid, int status, int dont_reset) {
 
 	PTRACE(PTRACE_GETREGS, pid, 0, &regs, -1, PT_RETERROR);
 
-	// Hmm
+	// We're pointing to the instruction past our breakpoint (0xcc)
 	hot_pc = (void *)(regs.rip - 1);
-	hot_sp = (void *)(regs.rsp + sizeof(void *));
 
-	// See if there's any one time intercepts
-	for (i = 0; i < saved_1t_prolog_entries; i++) {
-		if (saved_1t_prologs[i].addr == hot_pc) {
-			unsigned long rword;
-
-//			PRINT_ERROR("%s", "XXX: hit one time intercept!!!\n");
-			rword = saved_1t_prologs[i].saved_prolog;
-
-			PTRACE(PTRACE_POKETEXT, pid, hot_pc, rword, -1, PT_RETERROR);
-			regs.rip = (long)hot_pc;
-			PTRACE(PTRACE_SETREGS, pid, 0, &regs, -1, PT_RETERROR);
-
-//			PRINT_ERROR("%s", "XXX: one time intercept restored OK\n");
-			memset(&saved_1t_prologs[i], 0, sizeof(saved_1t_prologs[i]));
-
-			if (!set_pid_flags(pid, 0, 1))
-				PRINT_ERROR("Error clearing syscall status from PID %d\n", pid);
-
-			return 1;
-		}
-	}
+	// (Removed one time intercept check)
 
 	// Check for remote intercept first.
-	if (!check_remote_intercept(pid, hot_pc, &regs)) {
+	if (!check_remote_intercept(pid, hot_pc, &regs))
 		return 1;
-	}
 
-	for (i = 0; i < saved_prolog_entries; i++) {
-		if (saved_prologs[i].addr == hot_pc)
-			break;
-	}
-
-	if (i == saved_prolog_entries) {
-
-		for (ra = 0; ra < saved_ret_prolog_entries; ra++) {
-			if (saved_ret_prologs[ra].addr == hot_pc)
-				break;
-		}
-
-		if (ra == saved_ret_prolog_entries) {
-			PRINT_ERROR("Unexpected error: trace trap (%d) not at known intercept point (%p).\n",
-				pid, hot_pc);
-			print_instruction(pid, (void *)hot_pc, 16);
-			return -1;
-		}
-
-		is_return = 1;
-	}
-
-	if (dont_reset)
-		return 0;
-
-
-#define tgkill(tgid,tid,sig)	syscall(SYS_tgkill, tgid, tid, sig)
-	if (master_pid > 0) {
-		size_t j;
-
-		for (j = 0; j < sizeof(observed_pids)/sizeof(observed_pids[0]); j++) {
-			int kret;
-
-			if (!observed_pids[j].pid)
-				continue;
-			else if (observed_pids[j].pid == pid)
-				continue;
-			else if (observed_pids[j].flags & FLAG_TRAP_SYSCALL)
-				continue;
-
-			if ((kret = tgkill(master_pid, observed_pids[j].pid, SIGSTOP)) == -1) {
-				perror_pid("tgkill", observed_pids[j].pid);
-
-				if (errno == ESRCH)
-					monitor_pid(observed_pids[j].pid, 1);
-			}
-
-		}
-
-	}
-
-	if (!is_return) {
-		size_t ridx;
-
-		PTRACE_PEEK(ret_addr, PTRACE_PEEKTEXT, pid, regs.rsp, -1, PT_RETERROR);
-
-//		printf("RET ADDR would have been %lx\n", ret_addr);
-		symname = lookup_addr_info(hot_pc, &argsize, &fname, &line_no);
-
-		if (set_ret_intercept(pid, symname, (void *)ret_addr, &ridx) < 0) {
-			PRINT_ERROR("Error: could not set intercept on return address for function \"%s\"\n", symname);
-	//		return -1;
-		}
-
-	}
-
-	if (is_return) {
-		DEBUG_PRINT(2, "Return address trace generated at PC %p SP %p\n", hot_pc, hot_sp);
-		symname = saved_ret_prologs[ra].fname;
-	} else {
-		DEBUG_PRINT(2, "Trace generated at PC %p SP %p\n", hot_pc, hot_sp);
-//		printf("sym = [%s]\n", symname);
-	}
-
-	// Don't replace 
-	if (is_return)
-		PTRACE(PTRACE_POKETEXT, pid, saved_ret_prologs[ra].addr, saved_ret_prologs[ra].saved_prolog, -1, PT_RETERROR);
-	else
-		PTRACE(PTRACE_POKETEXT, pid, saved_prologs[i].addr, saved_prologs[i].saved_prolog, -1, PT_RETERROR);
-
-	regs.rip = (long)hot_pc;
-
-	PTRACE(PTRACE_SETREGS, pid, 0, &regs, -1, PT_RETERROR);
-
-	if ((lts = lt_symbol_bind(cfg.sh, hot_pc, symname)))
-		lts->args->stacksz = argsize;
-
-	lt_tsd_t *tsdx = thread_get_tsd(pid, 1);
-
-	if (!is_pid_monitored(pid, &pflags))
-		PRINT_ERROR("%s", "Warning: unable to get traced process flags. Weirdness may ensue...\n");
-
-//	fprintf(stderr, "Func %s entering: %d / %x\n", symname, is_return ? 0 : 1);
-
-	if (!(pflags & FLAG_TRAP_INTERRUPTED)) {
-		if (is_return) {
-			ret = sym_exit(symname, lts, "from", "to", pid, &regs, &regs, tsdx);
-	//		return 1;
-		} else {
-	//	fprintf(stderr, "HEH: %d / %s / %p\n", pid, symname, tsdx);
-			ret = sym_entry(symname, lts, "from", fname, pid, &regs, tsdx);
-		}
-
-	}
-
-	if (ret < 0) {
-		PRINT_ERROR("Encountered unexpected error handling function %s\n",
-			(is_return ? "exit" : "entry"));
-	}
-
-	PTRACE(PTRACE_SINGLESTEP, pid, 0, 0, -1, PT_RETERROR);
-
-	while (1) {
-		int wait_status = 0;
-
-		if (waitpid(pid, &wait_status, __WALL) < 0) {
-			perror_pid("waitpid", pid);
-			return -1;
-		}
-
-		if (WIFSTOPPED(wait_status) && ((WSTOPSIG(wait_status) == SIGSTOP))) {
-
-			if (!set_pid_flags(pid, pflags | FLAG_TRAP_INTERRUPTED, 0))
-				PRINT_ERROR("%s", "Warning: unable to set traced process flags. Weirdness may ensue...\n");
-
-			break;
-
-/*			PTRACE(PTRACE_CONT, pid, 0, 0, -1, PT_RETERROR);
-			continue; */
-		} else {
-
-			if (!set_pid_flags(pid, pflags & ~(FLAG_TRAP_INTERRUPTED), 0))
-				PRINT_ERROR("%s", "Warning: unable to set traced process flags. Weirdness may ensue...\n");
-
-		}
-
-		if (!WIFSTOPPED(wait_status) || (WSTOPSIG(wait_status) != SIGTRAP)) {
-			PRINT_ERROR("Error: single step process (%d) returned in unexpected fashion.\n", pid);
-			dump_wait_state(pid, wait_status, 1);
-			return -1;
-		}
-
-		break;
-	}
-
-//	fprintf(stderr, "Func %s made it through: %d\n", symname, is_return ? 0 : 1);
-
-	if (is_return) {
-		retrace = saved_ret_prologs[ra].saved_prolog;
-		ret_addr = (long)saved_ret_prologs[ra].addr;
-	} else {
-		retrace = saved_prologs[i].saved_prolog;
-		ret_addr = (long)saved_prologs[i].addr;
-	}
-
-	*((unsigned char *)&retrace) = 0xcc;
-
-	PTRACE(PTRACE_POKETEXT, pid, ret_addr, retrace, -1, PT_RETERROR);
-	return 1;
+	return -1;
 }
 
 int
@@ -891,7 +752,7 @@ check_wait_event(pid_t pid, int status) {
 }
 
 int
-trace_forever(pid_t pid) {
+trace_forever(pid_t pid, int verbose) {
 	struct user_regs_struct regs;
 	const char *fname = NULL;
 	char lastsym[128], tmpbuf[128], *symp;
@@ -912,6 +773,12 @@ trace_forever(pid_t pid) {
 		if (strncmp(lastsym, tmpbuf, fend)) {
 			fprintf(stderr, " - %s (%p)\n", tmpbuf, (void *)regs.rip);
 			fprintf(stderr, "      rdi = %llx, rsi = %llx, rdx = %llx, rcx = %llx             rax = %llx <- %s\n", regs.rdi, regs.rsi, regs.rdx, regs.rcx, regs.rax, lastsym);
+		} else if (verbose) {
+			unsigned long this_i;
+			unsigned char *ic = (unsigned char *)&this_i;
+
+			PTRACE_PEEK(this_i, PTRACE_PEEKTEXT, pid, regs.rip, 0, PT_DONTFAIL);
+			fprintf(stderr, ". %p  | %x\n", (void *)regs.rip, *ic);
 		}
 
 		memset(lastsym, 0, sizeof(lastsym));
@@ -946,93 +813,70 @@ dump_intercepts(void) {
 	if (DEBUG_LEVEL < 1)
 		return;
 
-	fprintf(stderr, "Intercepts set: %zu of max %zu\n", saved_prolog_entries, saved_prolog_nentries);
+	fprintf(stderr, "Intercepts set: %zu of max %zu\n", remote_intercept_entries, remote_intercept_nentries);
 
 	if (DEBUG_LEVEL < 2)
 		return;
 
-	for (i = 0; i < saved_prolog_entries; i++)
-		fprintf(stderr, "%.3zu: %p\n", i+1, saved_prologs[i].addr);
+	for (i = 0; i < remote_intercept_entries; i++)
+		fprintf(stderr, "%.3zu: %p (%s)\n", i+1, remote_intercepts[i].addr,
+			remote_intercepts[i].fname);
 
 	return;
 }
 
-int
-set_one_time_intercept(pid_t pid, void *addr) {
-	long saved_prolog = 0, mod_prolog;
-	unsigned char *tptr;
-	size_t i = 0;
+/*
+ * Allocate space in the remote process and copy isize's worth of bytes from icode into it.
+ * We can use a very simple memory management scheme since we have a relative idea of both
+ * the size of the memory that needs to be allocated, the number of total entries needed,
+ * and the fact that the memory will never be freed or reclaimed.
+ *
+ * So let's just uhh say... 4MB.
+ */
+void *
+get_remote_jmpbuf_space(pid_t pid, void *icode, size_t isize) {
+	static void *alloc_space = NULL;
+	static size_t alloc_used = 0, alloc_total = (4 * 1024 * 1024);
+	void *result;
 
-	while ((i < saved_1t_prolog_entries) && (saved_1t_prologs[i].addr != NULL))
-		i++;
-
-	if ((i == saved_1t_prolog_entries) && (i == saved_1t_prolog_nentries)) {
-		saved_prolog_t *new_prologs;
-
-		if (!(new_prologs = realloc(saved_1t_prologs, (saved_1t_prolog_nentries * 2 * sizeof(saved_prolog_t))))) {
-			perror_pid("realloc", pid);
-			return -1;
+	if (!alloc_space) {
+		if ((alloc_space = (void *)call_remote_mmap(pid, NULL, alloc_total, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_ANONYMOUS|MAP_PRIVATE, 0, 0)) == MAP_FAILED) {
+			perror_pid("mmap", pid);
+			alloc_space = NULL;
+			return NULL;
 		}
-
-		saved_1t_prolog_nentries *= 2;
-		saved_1t_prologs = new_prologs;
 	}
 
-	PTRACE_PEEK(saved_prolog, PTRACE_PEEKTEXT, pid, addr, -1, PT_RETERROR);
-
-	mod_prolog = saved_prolog;
-	tptr = (unsigned char *)&mod_prolog;
-	*tptr = 0xcc;
-
-	PTRACE(PTRACE_POKETEXT, pid, addr, mod_prolog, -1, PT_RETERROR);
-
-	saved_1t_prologs[i].addr = addr;
-	saved_1t_prologs[i].saved_prolog = saved_prolog;
-	saved_1t_prolog_entries++;
-	return 0;
-}
-
-int
-set_intercept(pid_t pid, void *addr) {
-	long saved_prolog = 0, mod_prolog;
-	unsigned char *tptr;
-
-	if (saved_prolog_entries == saved_prolog_nentries) {
-		saved_prolog_t *new_prologs;
-
-		if (!(new_prologs = realloc(saved_prologs, (saved_prolog_nentries * 2 * sizeof(saved_prolog_t))))) {
-			perror_pid("realloc", pid);
-			return -1;
-		}
-
-		saved_prolog_nentries *= 2;
-		saved_prologs = new_prologs;
+	if (isize + alloc_used > alloc_total) {
+		PRINT_ERROR("Error: remote process is out of jump space. Try increasing cap above %zu bytes?\n", alloc_total);
+		return NULL;
 	}
 
-	PTRACE_PEEK(saved_prolog, PTRACE_PEEKTEXT, pid, addr, -1, PT_RETERROR);
+	result = alloc_space + alloc_used;
 
-	mod_prolog = saved_prolog;
-	tptr = (unsigned char *)&mod_prolog;
-	*tptr = 0xcc;
+	if (write_bytes_remote(pid, result, icode, isize) < 0) {
+		PRINT_ERROR("Error writing jump buffer code to remote process at address %p\n", result);
+		return NULL;
+	}
 
-	PTRACE(PTRACE_POKETEXT, pid, addr, mod_prolog, -1, PT_RETERROR);
-
-	saved_prologs[saved_prolog_entries].addr = addr;
-	saved_prologs[saved_prolog_entries].saved_prolog = saved_prolog;
-	saved_prolog_entries++;
-	return 0;
+	alloc_used += isize;
+	return result;
 }
 
-int
-save_remote_intercept(pid_t pid, const char *fname, void *addr, int is_entry) {
-	size_t i;
+void *
+save_remote_intercept(pid_t pid, const char *fname, void *addr, void *raddr, int is_entry) {
+	unsigned char jbuf[128];
+	unsigned long old_prolog;
+	unsigned char *tptr;
+	unsigned char *saved_ibuf = NULL;
+	size_t i, jblen;
 
 	if (remote_intercept_entries == remote_intercept_nentries) {
 		remote_intercept_t *new_intercepts;
 
 		if (!(new_intercepts = realloc(remote_intercepts, (remote_intercept_nentries * 2 * sizeof(*remote_intercepts))))) {
 			perror_pid("realloc", pid);
-			return -1;
+			return NULL;
 		}
 
 		remote_intercept_nentries *= 2;
@@ -1040,106 +884,225 @@ save_remote_intercept(pid_t pid, const char *fname, void *addr, int is_entry) {
 	}
 
 	for (i = 0; i < remote_intercept_entries; i++) {
-		if (remote_intercepts[i].addr == addr) {
-			return 0;
+
+		if ((remote_intercepts[i].addr == addr) && (remote_intercepts[i].retaddr == raddr)) {
+
+			if (is_entry)
+				return ((void *)-1);
+			else
+				return remote_intercepts[i].jmpbuf;
+
+		} else if ((remote_intercepts[i].addr == addr) && !is_entry && remote_intercepts[i].is_entry) {
+			saved_ibuf = remote_intercepts[i].saved_prolog;
 		}
+
 	}
+
+	PTRACE_PEEK(old_prolog, PTRACE_PEEKTEXT, pid, addr, NULL, PT_RETERROR);
+	tptr = (unsigned char *)&old_prolog;
+
+	if ((*tptr == 0xe8) || (*tptr == 0xff) || (*tptr == 0x9a)) {
+		PRINT_ERROR("Warning: cannot intercept function %s at %p because it leads with a call instruction\n", fname, addr);
+		return is_entry ? ((void *)-1) : NULL;
+	} else if ((*tptr == 0xe9) || (*tptr == 0xeb) || (*tptr == 0xea)) {
+		PRINT_ERROR("Warning: cannot intercept function %s at %p because it leads with a jump instruction\n", fname, addr);
+		return is_entry ? ((void *)-1) : NULL;
+	} else if (*tptr == 0xc3) {
+		PRINT_ERROR("Warning: cannot intercept function %s at %p because it leads with a return\n", fname, addr);
+		return is_entry ? ((void *)-1) : NULL;
+	} else if ((tptr[0] == 0x48) && (tptr[1] == 0x83) && (tptr[2] == 0xec)) {
+		PRINT_ERROR("Warning: cannot intercept function %s at %p because it leads with a stack change operation\n", fname, addr);
+		return is_entry ? ((void *)-1) : NULL;
+	}
+
+	if (is_entry) {
+		void *first_i;
+		size_t to_copy;
+
+//		fprintf(stderr, "XXX: skipping jump buf redirect for function entry point: %s\n", fname);
+
+		if (!(first_i = get_first_instruction_remote(pid, addr, &to_copy))) {
+			PRINT_ERROR("%s", "Error: could not set up jump buffer for remote function intercept\n");
+			return NULL;
+		} else if (to_copy > sizeof(remote_intercepts[remote_intercept_entries].saved_prolog)) {
+			PRINT_ERROR("Error: read instruction was bigger than max size at %zu bytes\n", to_copy);
+			free(first_i);
+			return NULL;
+		}
+
+		// It's easier if we copy the entire 16 bytes, though, since we cannot write back any
+		// less than that with ptrace() with minimal overhead.
+//		memcpy(remote_intercepts[remote_intercept_entries].saved_prolog, first_i, to_copy);
+		memcpy(remote_intercepts[remote_intercept_entries].saved_prolog, first_i,
+			sizeof(remote_intercepts[remote_intercept_entries].saved_prolog));
+		free(first_i);
+		remote_intercepts[remote_intercept_entries].saved_prolog_len = to_copy;
+		remote_intercepts[remote_intercept_entries].jmpbuf = NULL;
+		remote_intercepts[remote_intercept_entries].jblen = 0;
+	} else {
+
+		if (!saved_ibuf) {
+			PRINT_ERROR("Error creating return jump buffer for function %s: could not find entry point\n", fname);
+			return NULL;
+		}
+
+		if (create_jmp(pid, addr, raddr, saved_ibuf, jbuf, &jblen) < 0) {
+			PRINT_ERROR("%s", "Unknown error creating jump buffer\n");
+			return NULL;
+		}
+
+		remote_intercepts[remote_intercept_entries].jmpbuf = get_remote_jmpbuf_space(pid, jbuf, jblen);
+		remote_intercepts[remote_intercept_entries].jblen = jblen;
+
+		if (!remote_intercepts[remote_intercept_entries].jmpbuf) {
+			PRINT_ERROR("Error: could not create remote jump buffer of size %zu bytes\n", jblen);
+			return NULL;
+		}
+
+/*		fprintf(stderr, "jblen = %zu\n", jblen);
+		fprintf(stderr, "jbuf = %p\n", jbuf);
+		fprintf(stderr, ".global main\n");
+		fprintf(stderr, "main:\n");
+		for (size_t xxx = 0; xxx < jblen; xxx++) {
+			fprintf(stderr, ".byte 0x%.2x\n", jbuf[xxx]);
+		}*/
+	}
+
+	// Overwrite after copy
+	*tptr = 0xcc;
+	PTRACE(PTRACE_POKETEXT, pid, addr, old_prolog, NULL, PT_RETERROR);
 
 	remote_intercepts[remote_intercept_entries].addr = addr;
 	remote_intercepts[remote_intercept_entries].fname = strdup(fname);
 	remote_intercepts[remote_intercept_entries].is_entry = is_entry;
+	remote_intercepts[i].retaddr = is_entry ? NULL : raddr;
+
 	remote_intercept_entries++;
 
-	return 0;
+	if (is_entry)
+		return ((void *)-1);
+
+	return remote_intercepts[remote_intercept_entries-1].jmpbuf;
+}
+
+size_t
+instruction_bytes_needed(void *addr, size_t maxlen) {
+	ZydisDecoder decoder;
+	ZydisDecodedInstruction instruction;
+	uint64_t rip = (uint64_t)addr;
+	uint8_t *idata = (uint8_t *)addr;
+	size_t total = 0, minsize = 1;
+
+	ZydisDecoderInit(&decoder, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_ADDRESS_WIDTH_64);
+
+	while (total < minsize) {
+
+		if (!ZYDIS_SUCCESS(ZydisDecoderDecodeBuffer(&decoder, idata, maxlen, rip, &instruction))) {
+			fprintf(stderr, "Error decoding instruction at %p\n", (void *)rip);
+			return 0;
+		}
+
+		idata += instruction.length;
+		maxlen -= instruction.length;
+		rip += instruction.length;
+		total += instruction.length;
+        }
+
+	return total;
+}
+
+void *
+get_first_instruction_remote(pid_t pid, void *addr, size_t *psize) {
+	void *remote_i;
+	// This is the largest possible instruction;
+	// it's also unlikely to overflow past the end of the text segment.
+	size_t copy_size = 15, res;
+
+	if (!(remote_i = read_bytes_remote(pid, addr, copy_size))) {
+		PRINT_ERROR("Error reading remote instructions at %p\n", addr);
+		return NULL;
+	}
+
+	res = instruction_bytes_needed(remote_i, copy_size);
+	*psize = res;
+
+	return remote_i;
 }
 
 int
-set_ret_intercept(pid_t pid, const char *fname, void *addr, size_t *pidx) {
-	long saved_ret_prolog = 0, mod_prolog;
-	unsigned char *tptr;
-	size_t i;
+create_jmp(pid_t pid, void *ataddr, void *raddr, void *ibuf, void *outbuf, size_t *outlen) {
+	void *first_i;
+	unsigned char *outptr = (unsigned char *)outbuf;
+	unsigned long retaddr, cont_addr;
+	uint32_t ret_hi, ret_lo, cont_hi, cont_lo;
+	size_t to_copy;
 
-	if (saved_ret_prolog_entries == saved_ret_prolog_nentries) {
-		saved_prolog_t *new_prologs;
-
-		if (!(new_prologs = realloc(saved_ret_prologs, (saved_ret_prolog_nentries * 2 * sizeof(saved_prolog_t))))) {
-			perror_pid("realloc", pid);
+	if (!ibuf) {
+		if (!(first_i = get_first_instruction_remote(pid, ibuf, &to_copy))) {
+			PRINT_ERROR("%s", "Error: could not set up jump buffer for remote function intercept\n");
 			return -1;
 		}
-
-		saved_ret_prolog_nentries *= 2;
-		saved_ret_prologs = new_prologs;
 	}
-
-	for (i = 0; i < saved_ret_prolog_entries; i++) {
-		if (saved_ret_prologs[i].addr == addr) {
-			if (pidx)
-				*pidx = saved_ret_prolog_entries;
-
-			return 0;
+	else {
+		if (!(to_copy = instruction_bytes_needed(ibuf, 15))) {
+			PRINT_ERROR("%s", "Error: could not read saved instructions to create intercept\n");
+			return -1;
 		}
 	}
 
-	errno = 0;
-	saved_ret_prolog = ptrace(PTRACE_PEEKTEXT, pid, addr, 0);
-	if (errno != 0) {
-		static char *startup_funcs[] =
-			{ "_rt0_amd64_linux", "main", "runtime.rt0_go", NULL };
-		char **sptr = startup_funcs;
-
-		while (*sptr) {
-
-			if (!strcmp(fname, *sptr)) {
-				PRINT_ERROR("Warning: could not set return address breakpoint for function \"%s\"() but that's normal...\n", fname);
-				return 0;
-			}
-
-			sptr++;
-		}
-
-		perror_pid("ptrace(PTRACE_PEEKTEXT)", pid);
-		return -1;
+	if (!ibuf) {
+		memcpy(outptr, first_i, to_copy);
+		free(first_i);
+	} else {
+		memcpy(outptr, ibuf, to_copy);
 	}
 
-	mod_prolog = saved_ret_prolog;
-	tptr = (unsigned char *)&mod_prolog;
-	*tptr = 0xcc;
+	*outlen = to_copy;
+	outptr += to_copy;
 
-	PTRACE(PTRACE_POKETEXT, pid, addr, mod_prolog, -1, PT_RETERROR);
+	cont_addr = (unsigned long)ataddr + to_copy;
+	cont_hi = (((unsigned long)cont_addr) & 0xffffffff00000000) >> 32;
+	cont_lo = (((unsigned long)cont_addr) & 0x00000000ffffffff);
 
-	saved_ret_prologs[saved_ret_prolog_entries].addr = addr;
-	saved_ret_prologs[saved_ret_prolog_entries].fname = strdup(fname);
-	saved_ret_prologs[saved_ret_prolog_entries].saved_prolog = saved_ret_prolog;
+	retaddr = (unsigned long)raddr;
+	ret_hi = (((unsigned long)retaddr) & 0xffffffff00000000) >> 32;
+	ret_lo = (((unsigned long)retaddr) & 0x00000000ffffffff);
 
-	if (pidx)
-		*pidx = saved_ret_prolog_entries;
+#define OFFSET_WORD_CONT_HI	8
+#define OFFSET_WORD_CONT_LO	16
+#define OFFSET_WORD_RET_HI	29
+#define OFFSET_WORD_RET_LO	36
+	unsigned char return_bytes[] = {
+		0x48, 0x83, 0xc4, 0x08,
+		0xc7, 0x44, 0x24, 0xfc, 0x11, 0x22, 0x33, 0x44,
+		0xc7, 0x44, 0x24, 0xf8, 0x55, 0x66, 0x77, 0x88,	0xff, 0x54, 0x24, 0xf8, /*0xcc,*/ 0x50,
+		0xc7, 0x44, 0x24, 0x04, 0x44, 0x33, 0x22, 0x11,
+		0xc7, 0x04, 0x24, 0x88, 0x77, 0x66, 0x55, 0xcc, 0xc3 };
+/*
+	add    $0x8,     %rsp
+	movl   $0x11223344, -0x4(%rsp)
+	movl   $0x55667788, -0x8(%rsp)
+	callq  *-0x8(%rsp)
+	push   %rax
+	movl   $0x11223344, 0x4(%rsp)
+	movl   $0x55667788, (%rsp)
+	int3
+	retq
+*/
 
-	saved_ret_prolog_entries++;
+	memcpy(&return_bytes[OFFSET_WORD_CONT_HI], &cont_hi, sizeof(cont_hi));
+	memcpy(&return_bytes[OFFSET_WORD_CONT_LO], &cont_lo, sizeof(cont_lo));
+	memcpy(&return_bytes[OFFSET_WORD_RET_HI], &ret_hi, sizeof(ret_hi));
+	memcpy(&return_bytes[OFFSET_WORD_RET_LO], &ret_lo, sizeof(ret_lo));
+
+	memcpy(outptr, return_bytes, sizeof(return_bytes));
+	*outlen += sizeof(return_bytes);
+
 	return 0;
 }
 
 int
 trace_init(void) {
-	if (!(saved_prologs = malloc(saved_prolog_nentries * sizeof(*saved_prologs)))) {
-		PERROR("pid");
-		return -1;
-	}
-
-	memset(saved_prologs, 0, saved_prolog_nentries * sizeof(*saved_prologs));
-
-	if (!(saved_ret_prologs = malloc(saved_ret_prolog_nentries * sizeof(*saved_ret_prologs)))) {
-		PERROR("pid");
-		return -1;
-	}
-
-	memset(saved_ret_prologs, 0, saved_ret_prolog_nentries * sizeof(*saved_ret_prologs));
-
-	if (!(saved_1t_prologs = malloc(saved_1t_prolog_nentries * sizeof(*saved_1t_prologs)))) {
-		PERROR("pid");
-		return -1;
-	}
-
-	memset(saved_1t_prologs, 0, saved_1t_prolog_nentries * sizeof(*saved_1t_prologs));
 
 	if (!(remote_intercepts = malloc(remote_intercept_nentries * sizeof(*remote_intercepts)))) {
 		PERROR("pid");
@@ -1191,10 +1154,11 @@ set_all_intercepts(pid_t pid) {
 				continue;
 			}
 
-			if (set_intercept(pid, (void *)symbol_store[i].map[j].addr) < 0) {
+			if (!save_remote_intercept(pid, symbol_store[i].map[j].name, (void *)symbol_store[i].map[j].addr, NULL, 1)) {
 				PRINT_ERROR("Error: could not set intercept on symbol: %s\n", symbol_store[i].map[j].name);
 				return -1;
 			}
+
 		}
 
 	}
@@ -1348,14 +1312,8 @@ is_thread_in_syscall(pid_t pid) {
 //			fprintf(stderr, "XXX: errno = %d, code = %x, si_addr = %p\n", si.si_errno, si.si_code, si.si_addr);
 //			fprintf(stderr, "XXX: call addr = %p, syscall = %d\n", si.si_call_addr, si.si_syscall);
 
-			if (si.si_code == SI_TKILL) {
-//				fprintf(stderr, "XXX: (%p) %lx / %x / %x\n", (void *)regs.rip-2, word, iptr[0], iptr[1]);
-
-				if (set_one_time_intercept(pid, (void *)regs.rip) < 0)
-					PRINT_ERROR("Error setting one time intercept for executing syscall in %d\n", pid);
-				else if (!set_pid_flags(pid, FLAG_TRAP_SYSCALL, 1))
-					PRINT_ERROR("Error marking process %d safe from syscall restarts. This might get stormy...\n", pid);
-			}
+			// (removed one time intercept code)
+//			if (si.si_code == SI_TKILL) {
 		}
 
 	}
@@ -1612,12 +1570,18 @@ trace_program(const char *progname, char * const *args) {
 			break;
 		default: {
 			struct user_regs_struct regs;
-//			char **needed;
 			void *dlhandle, *initfunc = NULL, *ginit_copy;
 			char libpath[512] = { 0 };
-			signed long our_fs, old_fs;
+			signed long our_fs;
 			int pres;
 			size_t i = 0, ginit_size = 0;
+
+			// This is dead code as of now.
+/*			if (!alloc_memory_before_vma(pid, 32*3000)) {
+				PRINT_ERROR("%s", "Error: could not allocate jump buffer in traced process's address space");
+				exit(EXIT_FAILURE);
+			}
+*/
 
 			// Not statically linked in.
 			if (!(dlhandle = dlopen(GOMOD_PRINTLIB_NAME, RTLD_NOW|RTLD_DEEPBIND))) {
@@ -1699,8 +1663,6 @@ trace_program(const char *progname, char * const *args) {
 
 			PTRACE(PTRACE_GETREGS, pid, 0, &regs, EXIT_FAILURE, PT_FATAL);
 
-			old_fs = regs.fs_base;
-
 			if (set_fs_base_remote(pid, (unsigned long)our_fs) < 0) {
 				PRINT_ERROR("%s", "Error encountered setting up thread block in remote process\n");
 				exit(EXIT_FAILURE);
@@ -1711,53 +1673,10 @@ trace_program(const char *progname, char * const *args) {
 				exit(EXIT_FAILURE);
 			}
 
-/*			if (!(needed = get_all_so_needed(libname, NULL))) {
-				PRINT_ERROR("Error looking up dependencies for DSO: %s\n", libname);
-				exit(EXIT_FAILURE);
-			}
-
-			while (*needed) {
-				void *ep;
-
-				PRINT_ERROR("FINAL NEEDED: [%s]\n", *needed);
-
-				if ((res = open_dso_and_get_segments(*needed, pid, NULL, &reloc_base, 0)) < 0) {
-					PRINT_ERROR("Error copying out remote dependency: %s\n", *needed);
-					exit(EXIT_FAILURE);
-				}
-
-				ep = get_entry_point(*needed);
-
-				if (ep && reloc_base) {
-					void *init_reloc = reloc_base + (unsigned long)ep;
-
-					if (strstr(*needed, "libc")) {
-						PRINT_ERROR("HAHA AWESOME: %s -> %p (%p) <- %p\n", *needed, init_reloc, ep, reloc_base);
-						initfunc = init_reloc;
-					}
-
-				} else {
-					PRINT_ERROR("Warning: DSO %s had no mappable entry point\n", *needed);
-				}
-
-				needed++;
-			}
-
-			// We mapped in all our dependencies; now do ourselves
-			if ((res = open_dso_and_get_segments(libname, pid, &initfunc, &reloc_base, 1)) < 0) {
-//			if ((res = open_dso_and_get_segments(libname, pid, NULL, NULL)) < 0) {
-				PRINT_ERROR("Error copying out remote library: %s\n", libname);
-				exit(EXIT_FAILURE);
-			}*/
-
 /*			if (flash_remote_library_memory(pid, "/lib64/ld-linux-x86-64.so.2") < 0) {
 				PRINT_ERROR("%s", "Fatal error: failed to flash DSO: ld.so\n");
 				exit(EXIT_FAILURE);
-			}
-
-			fprintf(stderr, "Calling remote ld.so initialization...\n");
-			fprintf(stderr, "result = %d\n", initialize_remote_library(pid, "/lib64/ld-linux-x86-64.so.2", 1));
-			fprintf(stderr, "Remote ld.so initialization returned.\n");*/
+			}*/
 
 #define LIBC_PATH	"/lib/x86_64-linux-gnu/libc.so.6"
 			if (flash_remote_library_memory(pid, LIBC_PATH) < 0) {
@@ -1834,15 +1753,6 @@ trace_program(const char *progname, char * const *args) {
 				PRINT_ERROR("%s", "DID NOT fail again\n");
 			}*/
 
-
-
-/*			void *_cgo_sys_thread_create_addr = NULL;
-			_cgo_sys_thread_create_addr = resolve_local_symbol(GOMOD_PRINTLIB_NAME, "_cgo_sys_thread_create");
-			fprintf(stderr, "_cgo_sys_thread_create = %p\n", _cgo_sys_thread_create_addr);
-
-			if (ptrace(PTRACE_POKETEXT, pres, _cgo_sys_thread_create_addr, (void *)0xdeadbeef) == -1)
-				perror_pid("ptrace(PTRACE_POKETEXT)", pres);
-*/
 
 
 
@@ -2160,8 +2070,15 @@ main(int argc, char *argv[]) {
 	snprintf(gotrace_socket_path, sizeof(gotrace_socket_path), "/tmp/gotrace.sock.%d", getpid());
 	atexit(cleanup);
 
-	if (signal(SIGINT, handle_int) == SIG_ERR)
-		perror_pid("signal(SIGINT,...)", 0);
+	struct sigaction sa;
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = handle_int;
+	sa.sa_flags |= SA_NODEFER;
+//               sigset_t   sa_mask;
+
+//	if (signal(SIGINT, handle_int) == SIG_ERR)
+	if (sigaction(SIGINT, &sa, NULL) == -1)
+		perror_pid("sigaction(SIGINT,...)", 0);
 
 	trace_program(progname, &argv[2]);
 	exit(-1);

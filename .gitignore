@@ -22,5 +22,8 @@ gotrace
 autom4te.cache/
 backup/
 test/
+zydis/
+tmp/
 gomod_printlib.a
 gomod_printlib.h
+gomod_print

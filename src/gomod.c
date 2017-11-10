@@ -17,11 +17,10 @@
 #include <zydis/include/Zydis/Zydis.h>
 
 
-extern void *func_hook_start, *func_hook_end;
 int _gotrace_socket_fd = -1;
 
 int client_socket_loop(void *arg);
-unsigned long set_intercept_redirect(void *addr, unsigned long *ptrapaddr);
+//unsigned long set_intercept_redirect(void *addr, unsigned long *ptrapaddr);
 
 char *call_data_serializer(const char *dtype, void *addr);
 
@@ -101,106 +100,6 @@ instruction_bytes_needed(void *addr, size_t minsize) {
 	return total;
 }
 
-#define DEFAULT_ALLOC_SIZE	65536
-void *
-get_landing_pad(size_t size) {
-	landing_pad_t *newlp, *lptr = landing_pads;
-	void *buf;
-
-	while (lptr) {
-
-		if ((lptr->total_alloc - lptr->total_used) >= size) {
-			void *dptr = lptr->data + lptr->total_used;
-
-			lptr->total_used += size;
-			return dptr;
-		}
-
-		lptr = lptr->next;
-	}
-
-	// Didn't find the free space; will need to allocate more memory.
-	lptr = landing_pads;
-	while (lptr && lptr->next != NULL)
-		lptr = lptr->next;
-
-	if ((buf = mmap(NULL, DEFAULT_ALLOC_SIZE, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_ANONYMOUS|MAP_PRIVATE, 0, 0)) == MAP_FAILED) {
-		perror("mmap");
-		return NULL;
-	}
-
-	if (!(newlp = malloc(sizeof(*newlp)))) {
-		perror("malloc");
-		return NULL;
-	}
-
-	memset(newlp, 0, sizeof(*newlp));
-	newlp->data = buf;
-	newlp->total_alloc = DEFAULT_ALLOC_SIZE;
-	newlp->total_used = size;
-
-	if (!landing_pads)
-		landing_pads = newlp;
-	else
-		lptr->next = newlp;
-
-	return buf;
-}
-
-unsigned long
-set_intercept_redirect(void *addr, unsigned long *ptrapaddr) {
-	static char *landing_code = NULL;
-	static size_t landing_size = 0;
-	unsigned char *trampoline;
-	unsigned long uaddr;
-	unsigned long addr_base, page_mask, page_size = 4096;
-	size_t to_copy, to_allocate;
-
-	if (!landing_code) {
-		landing_size = (unsigned long)&func_hook_end - (unsigned long)&func_hook_start;
-
-		if (!(landing_code = malloc(landing_size))) {
-			perror("malloc");
-			return 0;
-		}
-
-		memcpy(landing_code, &func_hook_start, landing_size);
-	}
-
-	page_mask = ~(page_size - 1);
-	addr_base = (unsigned long)addr & page_mask;
-
-	if ((mprotect((void *)addr_base, page_size, PROT_READ|PROT_WRITE|PROT_EXEC)) == -1) {
-		perror("mprotect");
-		return 0;
-	}
-
-	if (!(to_copy = instruction_bytes_needed(addr, landing_size)))
-		return 0;
-
-	// 2 bytes: trap and return
-	to_allocate = to_copy + 2;
-
-	if (!(trampoline = get_landing_pad(to_allocate)))
-		return 0;
-
-//	fprintf(stderr, "XXX to copy went from %zu to %zu\n", landing_size, to_copy);
-	uaddr = (unsigned long)trampoline;
-	memcpy(landing_code+2, &uaddr, sizeof(uaddr));
-
-	*trampoline = 0xcc;
-	memcpy(trampoline+1, addr, to_copy);
-	trampoline[to_allocate - 1] = 0xc3;
-
-	memset(addr, 0x90, to_copy);
-	memcpy(addr, landing_code, landing_size);
-
-	if (ptrapaddr)
-		*ptrapaddr = uaddr;
-
-	return (unsigned long)trampoline;
-}
-
 static int client_loop_initialized = 0;
 
 int
@@ -227,7 +126,7 @@ client_socket_loop(void *arg) {
 
 		fprintf(stderr, "Loop CMD SIZE: %zu bytes / type %u\n", dblen, reqtype);
 
-		if (reqtype == GOMOD_RT_SET_INTERCEPT) {
+/*		if (reqtype == GOMOD_RT_SET_INTERCEPT) {
 			unsigned long iret, *addrp, addr_new;
 
 			if (dblen % sizeof(void *)) {
@@ -259,7 +158,7 @@ client_socket_loop(void *arg) {
 			}
 
 			free(dbuf);
-		} else if (reqtype == GOMOD_RT_SERIALIZE_DATA) {
+		} else */ if (reqtype == GOMOD_RT_SERIALIZE_DATA) {
 			unsigned long *fdata;
 			char *sdata, *fname = (char *)dbuf;
 
