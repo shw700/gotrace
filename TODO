@@ -4,10 +4,11 @@ complex and float type missing... but who cares for now? float probably easier t
 prevent crashy vma copy by halting memcpy() at brk() limit?
 * remove worthless libelf dependency
 
-jmpbuf problems:
-	call instruction
+Special jmpbuf problems resolved:
 	jmp instruction
-	rip-relative addressing
 	immediate ret
+jmpbuf problems remaining:
+	call instruction
+	rip-relative addressing
 	modification of rsp
-	*unknown* - explicit exclusions
+	*unknown* - require explicit exclusions

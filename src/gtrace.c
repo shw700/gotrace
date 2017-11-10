@@ -57,6 +57,7 @@ size_t n_unresolved_interfaces = 0;
 
 
 #define INTERCEPT_RETONLY	0x1
+#define INTERCEPT_JMP		0x2
 
 typedef struct remote_intercept {
 	void *addr;
@@ -497,12 +498,31 @@ check_remote_intercept(pid_t pid, void *pc, struct user_regs_struct *regs) {
 					lt_out_entry(cfg.sh, NULL, pid, tsdx->indent_depth+1, COLLAPSED_BARE,
 						symname, "", "", "[untraced function returns immediately]", "", &nc);
 					lt_out_exit(cfg.sh, NULL, pid, tsdx->indent_depth+1, COLLAPSED_BARE,
-						symname, "", "", "", "", &nc);
+						symname, "", "", " ", "", &nc);
 
 					// Simulate a return by popping return address and redirecting flow.
 					PTRACE(PTRACE_GETREGS, pid, 0, &nregs, EXIT_FAILURE, PT_FATAL);
 					nregs.rsp += sizeof(void *);
 					nregs.rip = retaddr;
+					PTRACE(PTRACE_SETREGS, pid, 0, &nregs, EXIT_FAILURE, PT_FATAL);
+					return 0;
+				} else if (remote_intercepts[i].flags & INTERCEPT_JMP) {
+					char jdesc[128];
+					lt_tsd_t *tsdx = thread_get_tsd(pid, 1);
+					unsigned long *jpc;
+					size_t nc = 0;
+
+					jpc = (unsigned long *)remote_intercepts[i].saved_prolog;
+					snprintf(jdesc, sizeof(jdesc), "[untraced function redirects to next func@%p]", (void *)*jpc);
+
+					lt_out_entry(cfg.sh, NULL, pid, tsdx->indent_depth+1, COLLAPSED_BARE,
+						symname, "", "", jdesc, "", &nc);
+					lt_out_exit(cfg.sh, NULL, pid, tsdx->indent_depth+1, COLLAPSED_BARE,
+						symname, "", "", " ", "", &nc);
+
+					// Simulate the jump manually.
+					PTRACE(PTRACE_GETREGS, pid, 0, &nregs, EXIT_FAILURE, PT_FATAL);
+					nregs.rip = *jpc;
 					PTRACE(PTRACE_SETREGS, pid, 0, &nregs, EXIT_FAILURE, PT_FATAL);
 					return 0;
 				}
@@ -921,13 +941,21 @@ save_remote_intercept(pid_t pid, const char *fname, void *addr, void *raddr, int
 	if ((*tptr == 0xe8) || (*tptr == 0xff) || (*tptr == 0x9a)) {
 		PRINT_ERROR("Warning: cannot intercept function %s at %p because it leads with a call instruction\n", fname, addr);
 		return is_entry ? ((void *)-1) : NULL;
-	} else if ((*tptr == 0xe9) || (*tptr == 0xeb) || (*tptr == 0xea)) {
+	} else if (*tptr == 0xe9) {
+		int32_t *offset;
+		unsigned long new_target;
+
+		iflags |= INTERCEPT_JMP;
+		offset = (int32_t *)(&tptr[1]);
+		new_target = (unsigned long)addr + *offset + 5;
+		memcpy(&remote_intercepts[remote_intercept_entries].saved_prolog, &new_target, sizeof(new_target));
+	} else if ((*tptr == 0xeb) || (*tptr == 0xea)) {
 		PRINT_ERROR("Warning: cannot intercept function %s at %p because it leads with a jump instruction\n", fname, addr);
 		return is_entry ? ((void *)-1) : NULL;
 	} else if (*tptr == 0xc3) {
 //		PRINT_ERROR("Warning: cannot intercept function %s at %p because it leads with a return\n", fname, addr);
-		iflags |= INTERCEPT_RETONLY;
 //		return is_entry ? ((void *)-1) : NULL;
+		iflags |= INTERCEPT_RETONLY;
 	} else if ((tptr[0] == 0x48) && (tptr[1] == 0x83) && (tptr[2] == 0xec)) {
 		PRINT_ERROR("Warning: cannot intercept function %s at %p because it leads with a stack change operation\n", fname, addr);
 		return is_entry ? ((void *)-1) : NULL;
