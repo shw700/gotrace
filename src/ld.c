@@ -16,16 +16,11 @@
 
 #define MAX_SO_NEEDED	64
 
-#define elf_load_library(dso,fd,dsize,pe,ph,ps)	elf_load_object(dso,fd,dsize,ET_DYN,pe,ph,ps)
-#define elf_load_program(dso,fd,dsize,pe,ph,ps)	elf_load_object(dso,fd,dsize,ET_EXEC,pe,ph,ps)
-
 
 char **strarr_dup(const char **sarray);
 void strarr_free(char **sarray);
 int strarr_contains(const char **sarray, const char *findstr);
 
-int elf_load_object(const char *dsopath, int *fd, size_t *dsize, int etype,
-	Elf64_Ehdr **pehdr, Elf64_Phdr **pphdr, Elf64_Shdr **pshdr);
 
 jmp_buf jb;
 void *last_copy_start, *last_copy_end;

@@ -32,6 +32,7 @@
 
 int lt_args_lex(void);
 void lt_args_error(const char *m);
+void lt_null_parser(int do_ignore);
 
 extern struct lt_enum *getenum(struct lt_config_shared *cfg, char *name);
 extern struct lt_bm_enum *getenum_bm(struct lt_config_shared *cfg, char *name);
@@ -65,11 +66,12 @@ do { \
 %}
 
 
-%token NEWLINE NAME TYPE_PREFIX FILENAME FUNC STRUCT CONST IMPORT END POINTER SLICE
+%token NEWLINE NAME TYPE_PREFIX FILENAME FUNC STRUCT CONST IMPORT DEFINITION CONDITIONAL COND_VAR COND_EXPR COND_VAL END POINTER SLICE IGNORE
 
 %union
 {
 	char *s;
+	int i;
 	struct lt_arg *arg;
 	struct lt_enum_elem *enum_elem;
 	struct lt_bm_enum_elem *bm_enum_elem;
@@ -82,6 +84,9 @@ do { \
 %type <s>         POINTER
 %type <s>         FILENAME
 %type <s>         NEWLINE
+%type <s>         COND_VAR
+%type <i>         COND_EXPR
+%type <s>         COND_VAL
 %type <head>      STRUCT_DEF
 %type <head>      CONST_DEF
 %type <s>         ENUM_REF
@@ -96,6 +101,10 @@ entry:
 entry blank_space
 |
 entry struct_def
+|
+entry pp_def
+|
+entry cond_clause
 |
 entry const_def
 |
@@ -159,6 +168,68 @@ STRUCT_DEF DEF ';'
      with the global struct_alive thingie... 
      there could be better way probably */
 {
+}
+
+/* "preprocessor" definitions */
+pp_def:
+DEFINITION COND_VAR COND_VAL
+{
+	unsigned int vernum;
+
+	if (strcmp($2, "GOVERSION"))
+		ERROR("Unsupported conditional variable %s; only GOVERSION is currently supported\n", $2);
+
+	free($2);
+
+	if (!parse_golang_vernum($3, &vernum))
+		ERROR("Invalid conditional value \"%s\"; must be a version number\n", $3);
+
+	golang_bin_version = vernum;
+	free($3);
+}
+
+/* conditional section */
+cond_clause:
+CONDITIONAL COND_VAR COND_EXPR COND_VAL
+{
+	unsigned int vernum = 0;
+	int matches = 0;
+
+	if (strcmp($2, "GOVERSION"))
+		ERROR("Unsupported conditional variable %s; only GOVERSION is currently supported\n", $2);
+
+	free($2);
+
+	if (!parse_golang_vernum($4, &vernum))
+		ERROR("Invalid conditional value \"%s\"; must be a version number\n", $4);
+
+	free($4);
+
+	switch($3) {
+		case YY_PP_EQ:
+			matches = golang_bin_version == vernum;
+			break;
+		case YY_PP_NE:
+			matches = golang_bin_version != vernum;
+			break;
+		case YY_PP_LT:
+			matches = golang_bin_version < vernum;
+			break;
+		case YY_PP_LTE:
+			matches = golang_bin_version <= vernum;
+			break;
+		case YY_PP_GT:
+			matches = golang_bin_version > vernum;
+			break;
+		case YY_PP_GTE:
+			matches = golang_bin_version >= vernum;
+			break;
+		default:
+			ERROR("Unsupported conditional expression type in comparison\n");
+			break;
+	}
+
+	lt_null_parser(!matches);
 }
 
 /* enum definitions */

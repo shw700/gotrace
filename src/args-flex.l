@@ -34,13 +34,15 @@ int launch_preprocessor = 0;
 
 %}
 
-alphnum		[-0-9a-zA-Z_]
-type_prefix     [a-zA-z_]+\.\(
+alphnum		[-0-9a-zA-Z_]+
+type_prefix	[a-zA-z_]+\.\(
 name		([-0-9a-zA-Z_\.|/|\\])+
 filename	([-0-9a-zA-Z\./_])+
 whitespace	([ \t])
+condvar		[a-zA-Z_]+
+vernum		[0-9]?\.[0-9]+(\.[0-9]+)?
 
-%x comment import
+%x comment import conditional definition ignore
 %%
  /* We need to delay return of the preprocessor filename because our grammar parser
     tries to read in the next file's contents before it has transitioned out of the
@@ -60,7 +62,25 @@ whitespace	([ \t])
 <comment>\n		{ lt_inc_stack(lt_args_sinc)->lineno++; }
 <comment>"*"+"/"	BEGIN(INITIAL);
 
-"import"		{ BEGIN(import); return IMPORT; }
+"import "		{ BEGIN(import); return IMPORT; }
+"#define"{whitespace}	{ BEGIN(definition); return DEFINITION; }
+"#if"{whitespace}	{ BEGIN(conditional); return CONDITIONAL; }
+"#endif"		BEGIN(INITIAL);
+<definition>{condvar}	{ lt_args_lval.s = strdup(lt_args_text); return COND_VAR; }
+<definition>{vernum}	{ lt_args_lval.s = strdup(lt_args_text); return COND_VAL; }
+<definition>\n		BEGIN(INITIAL);
+<conditional>{condvar}	{ lt_args_lval.s = strdup(lt_args_text); return COND_VAR; }
+<conditional>"=="	{ lt_args_lval.i = YY_PP_EQ; return COND_EXPR; }
+<conditional>">"	{ lt_args_lval.i = YY_PP_GT; return COND_EXPR; }
+<conditional>">="	{ lt_args_lval.i = YY_PP_GTE; return COND_EXPR; }
+<conditional>"<="	{ lt_args_lval.i = YY_PP_LTE; return COND_EXPR; }
+<conditional>"<"	{ lt_args_lval.i = YY_PP_LT; return COND_EXPR; }
+<conditional>"!="	{ lt_args_lval.i = YY_PP_NE; return COND_EXPR; }
+<conditional>{vernum}	{ lt_args_lval.s = strdup(lt_args_text); return COND_VAL; }
+
+<ignore>.		;
+<ignore>"#endif"	{ BEGIN(INITIAL); }
+
 <import>{filename}	{ got_filename = strdup(lt_args_text); }
 <import>"\""		{ if (!got_filename) return '"'; }
 <import>\n		{ lt_inc_stack(lt_args_sinc)->lineno++;
@@ -110,4 +130,13 @@ void lt_args_error(const char *m)
 		lt_inc_stack(lt_args_sinc)->file,
 		lt_inc_stack(lt_args_sinc)->lineno,
 		m);
+}
+
+void lt_null_parser(int do_ignore) {
+
+	if (do_ignore) {
+		BEGIN(ignore);
+	} else {
+		BEGIN(INITIAL);
+	}
 }

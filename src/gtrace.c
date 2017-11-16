@@ -36,6 +36,7 @@
 
 
 unsigned long MAGIC_FUNCTION = 0;
+unsigned int golang_bin_version = 0;
 
 
 typedef enum {
@@ -87,8 +88,7 @@ struct lt_config_audit cfg;
 char gotrace_socket_path[128];
 
 char *excluded_intercepts[] = {
-	"main",		// RIP-relative addressing
-
+//	"main",		// RIP-relative addressing
 	"main.main",
 	"runtime.init.2",
 	"runtime.main",
@@ -97,10 +97,31 @@ char *excluded_intercepts[] = {
 	"fmt.*[pP]rintln",
 	"fmt.\\(\\*pp\\).*",
 
-	"runtime.checkASM",
+//	"runtime.checkASM",	// RIP-relative addressing
 	"runtime.morestack_noctxt",
 
-	"runtime.deferreturn",	// RIP-relative addressing
+	"runtime.deferreturn",
+
+	"runtime.\\(\\*mcache\\).nextFree",
+	"runtime.mallocgc",
+	"runtime.newobject",
+	"runtime.\\(\\*mspan\\).nextFreeIndex",
+	"sync.\\(\\*Mutex\\).Lock",
+	"sync.\\(\\*Once\\).Do",
+	"syscall.Getenv",
+	"os.Getenv",
+	"internal/singleflight.\\(\\*Group\\).doCall",
+	"net.systemConf",
+	"net.initConfVal",
+	"net.goDebugNetDNS",
+	"net.\\(\\*Resolver\\).exchange",
+	"net.\\(\\*Resolver\\).tryOneName",
+	"net.\\(\\*Resolver\\).lookupIP",
+	"net.goDebugString",
+	"net.glob..func10",
+	"net.\\(\\*Resolver\\).goLookupIPCNAMEOrder.func1",
+	"net.\\(\\*Resolver\\).LookupIPAddr.func1",
+	"net.\\(\\*Resolver\\).\\(net.lookupIP\\)-fm",
 };
 
 pid_t master_pid = -1, socket_pid = -1;
@@ -1053,7 +1074,16 @@ save_remote_intercept(pid_t pid, const char *fname, void *addr, void *raddr, int
 	PTRACE_PEEK(old_prolog, PTRACE_PEEKTEXT, pid, addr, NULL, PT_RETERROR);
 	tptr = (unsigned char *)&old_prolog;
 
-	if (*tptr == 0xe8) {
+/*	if ((tptr[0] == 0x48) && (tptr[1] == 0x8d) && (tptr[2] != 0x05)) {
+		PRINT_ERROR("Warning: suspicious function: %s\n", fname);
+		return is_entry ? ((void *)-1) : NULL;
+	}*/
+
+	if ((tptr[0] == 0x48) && (tptr[1] == 0x8d) &&
+			((tptr[2] == 0x05) || tptr[2] == 0x3d)) {
+		PRINT_ERROR("Warning: cannot intercept function %s at %p because it starts with RIP-relative addressing\n", fname, addr);
+		return is_entry ? ((void *)-1) : NULL;
+	} else if (*tptr == 0xe8) {
 		int32_t *offset;
 		unsigned long new_target;
 
@@ -2116,6 +2146,80 @@ scan_interfaces(void) {
 	return;
 }
 
+#define GOLANG_VERSYM	"runtime.buildVersion"
+unsigned int
+get_golang_bin_ver(const char *exename) {
+	Elf64_Ehdr *ehdr;
+	Elf64_Phdr *phdr;
+	Elf64_Shdr *shdr;
+	unsigned char *bindata;
+	void *gaddr = NULL;
+	unsigned long saddr;
+	char *gstr;
+	int fd;
+	size_t fsize, saddr_offset, soffset, i;
+	unsigned int result = 0;
+
+	for (i = 0; i < sizeof(symbol_store)/sizeof(symbol_store[0]); i++) {
+		size_t j;
+
+		if (!symbol_store[i].l)
+			continue;
+
+		for (j = 0; j < symbol_store[i].msize; j++) {
+
+			if (strncmp(symbol_store[i].map[j].name, GOLANG_VERSYM, strlen(GOLANG_VERSYM)))
+				continue;
+			else if (symbol_store[i].map[j].is_func)
+				continue;
+
+			gaddr = (void *)symbol_store[i].map[j].addr;
+			break;
+		}
+
+	}
+
+	if (!gaddr)
+		return 0;
+
+	if (elf_load_program(exename, &fd, &fsize, &ehdr, &phdr, &shdr) < 0) {
+		PRINT_ERROR("Error opening ELF executable: %s\n", exename);
+		return 0;
+	}
+
+	bindata = (unsigned char *)ehdr;
+
+	if (!(saddr_offset = elf_read_vaddr(bindata, ehdr, phdr, gaddr, 0))) {
+		PRINT_ERROR("Error reading program golang version data at virtual address: %p\n", gaddr);
+		goto out;
+	}
+
+	saddr = *((unsigned long *)(bindata + saddr_offset));
+
+	if (!(soffset = elf_read_vaddr(bindata, ehdr, phdr, (void *)saddr, 0))) {
+		PRINT_ERROR("Error reading program golang verison string at virtual address: %p\n", gaddr);
+		goto out;
+	}
+
+	gstr = (char *)(bindata + soffset);
+
+	if (strncmp(gstr, "go", 2)) {
+		PRINT_ERROR("Error parsing unexpected golang version string: %s\n", gstr);
+		goto out;
+	}
+
+	if (!parse_golang_vernum(gstr+2, &result)) {
+		PRINT_ERROR("Error parsing unexpected golang version string: %s\n", gstr);
+		goto out;
+	}
+
+out:
+	munmap(bindata, fsize);
+	close(fd);
+
+	return result;
+}
+
 void
 resolve_all_interfaces(pid_t pid) {
 	size_t i;
@@ -2255,13 +2359,20 @@ main(int argc, char *argv[]) {
 
 	balloon();
 
-	if (audit_init(&cfg, argc, argv, environ) < 0) {
-		fprintf(stderr, "Error encountered in initialization! Aborting.\n");
+	if ((syms_ok = get_all_funcs_in_object(progname)) != 1) {
+		fprintf(stderr, "Error: could not read symbols from debug object\n");
 		exit(EXIT_FAILURE);
 	}
 
-	if ((syms_ok = get_all_funcs_in_object(progname)) != 1) {
-		fprintf(stderr, "Error: could not read symbols from debug object\n");
+	if (!(golang_bin_version = get_golang_bin_ver(argv[1]))) {
+		PRINT_ERROR("%s", "Error: could not read golang compiler version from target program\n");
+		exit(EXIT_FAILURE);
+	}
+
+	PRINT_ERROR("Detected golang compiler version for target: %u\n", golang_bin_version);
+
+	if (audit_init(&cfg, argc, argv, environ) < 0) {
+		fprintf(stderr, "Error encountered in initialization! Aborting.\n");
 		exit(EXIT_FAILURE);
 	}
 

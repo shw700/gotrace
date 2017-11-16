@@ -27,6 +27,13 @@
 
 #define MAX_INCLUDE_DEPTH  10
 
+#define YY_PP_EQ	1
+#define YY_PP_NE	2
+#define YY_PP_LT	3
+#define YY_PP_LTE	4
+#define YY_PP_GT	5
+#define YY_PP_GTE	6
+
 struct lt_include_stack {
 	FILE *in;
 	void *buf;

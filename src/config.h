@@ -41,6 +41,9 @@
 #include "gomod_print/gomod_print.h"
 
 
+extern unsigned int golang_bin_version;
+
+
 typedef struct function_call {
 	char *fn_name;
 	struct user_regs_struct *registers;
@@ -290,6 +293,7 @@ pid_t gettid(void);
 void *map_closest_area(void *refaddr, size_t msize);
 size_t make_jmp_buf(unsigned long from, unsigned long to, void *buf, size_t buflen);
 //void backtrace_unwind(void *uc);
+int parse_golang_vernum(const char *str, unsigned int *result);
 
 /* arch specific */
 char *read_string_remote(pid_t pid, char *addr, size_t slen);
@@ -310,6 +314,7 @@ unsigned long get_fs_base_remote(pid_t pid);
 int replicate_process_remotely(pid_t pid, int **shmids);
 void *replicate_environ(pid_t pid);
 void *resolve_local_symbol(const char *libpath, const char *funcname);
+size_t elf_read_vaddr(unsigned char *bindata, Elf64_Ehdr *ehdr, Elf64_Phdr *phdr, void *base_addr, size_t reqsize);
 int flash_remote_library_memory(pid_t pid, const char *dsopath);
 void *alloc_memory_before_vma(pid_t pid, size_t nbytes);
 
@@ -323,6 +328,10 @@ int check_vma_collision(pid_t pid1, pid_t pid2, int exclude_vsyscall, int exclud
 char *call_gofunc(void *addr, int set_new_fs, int no_ret, void *param, void **mout);
 char *call_gofunc_init(golang_func_t *inittable, void *addr, int set_new_fs, int no_ret, void *param, void **mout);
 char *call_gofunc_by_name_init(golang_func_t *inittable, const char *funcname, int set_new_fs, int no_ret, void *param, void **mout);
+
+#define elf_load_library(dso,fd,dsize,pe,ph,ps) elf_load_object(dso,fd,dsize,ET_DYN,pe,ph,ps)
+#define elf_load_program(dso,fd,dsize,pe,ph,ps) elf_load_object(dso,fd,dsize,ET_EXEC,pe,ph,ps)
+int elf_load_object(const char *dsopath, int *fd, size_t *dsize, int etype, Elf64_Ehdr **pehdr, Elf64_Phdr **pphdr, Elf64_Shdr **pshdr);
 
 
 

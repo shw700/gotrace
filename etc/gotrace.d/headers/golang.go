@@ -1,6 +1,8 @@
 // This is obviously not really golang code;
 // there is still work to do with porting the C grammar over.
 
+//#define GOVERSION	1.7.0
+
 const mmap_prot (
 	PROT_NONE      = 0x0
 	PROT_READ      = 0x1
@@ -46,6 +48,7 @@ func runtime.checkASM() bool
 func runtime.initSizes()
 func runtime.goargs()
 func runtime.init()
+func runtime.goexit0(gp *g)
 
 func runtime.convT2E(t *_type, elem unsafe.Pointer) (e face)
 //func runtime.convT2I(tab *_type, elem unsafe.Pointer) (i iface)
@@ -63,6 +66,7 @@ func runtime.getitab(inter *interfacetype, typ *_type, canfail bool) *itab
 func runtime.memeq(a, b unsafe.Pointer, size uintptr) bool
 func runtime.memequal64(p, q unsafe.Pointer) bool
 func runtime.memclr(ptr unsafe.Pointer, n uintptr)
+func runtime.memclrNoHeapPointers(ptr unsafe.Pointer, n uintptr)
 
 func runtime.printstring(s string)
 func runtime.printint(v int64)
@@ -255,6 +259,7 @@ func runtime.deltimer(t *timer) bool
 func runtime.cputicks() int64
 func runtime.addtimerLocked(t *timer)
 func runtime.siftupTimer(i int)
+func runtime.siftdownTimer(i int)
 
 // Errors
 func errors.New(text string) error
@@ -375,6 +380,7 @@ func runtime.runqgrab(_p_ *p, batch *guintptr, batchHead uint32, stealRunNextG b
 func runtime.runqget(_p_ *p) (gp *g, inheritTime bool)
 func runtime.globrunqget(_p_ *p, max int32) *g
 func runtime.runqput(_p_ *p, gp *g, next bool)
+func runtime.runqempty~(_p_ *p) bool
 func runtime.goready(gp *g, traceskip int)
 func runtime.deferreturn(arg0 uintptr/p)
 func runtime.deferproc(siz int32, fn *funcval)
@@ -394,6 +400,7 @@ func runtime.return0()
 func runtime.adjustsudogs(gp *g, adjinfo *adjustinfo)
 func runtime.acquireSudog() *sudog
 func runtime.releaseSudog(s *sudog)
+func runtime.gfput(_p_ *p, gp *g)
 func runtime.stackinit()
 func runtime.copystack(gp *g, newsize uintptr)
 func runtime.stackcacherefill(c *mcache, order uint8)
@@ -534,6 +541,7 @@ func runtime.mapassign1(t *maptype, h *hmap, key unsafe.Pointer, val unsafe.Poin
 func runtime.mapaccess2_fast64(t *maptype, h *hmap, key uint64) (unsafe.Pointer, bool)
 func runtime.mapaccess1_faststr(t *maptype, h *hmap, ky string) unsafe.Pointer
 func runtime.mapaccess2_faststr(t *maptype, h *hmap, ky string) (unsafe.Pointer, bool)
+func runtime.mapaccess1_fast32(t *maptype, h *hmap, key uint32) unsafe.Pointer
 func runtime.makemap(t *maptype, hint int64, h *hmap, bucket unsafe.Pointer) *hmap
 func runtime.mapzero(t *_type)
 func runtime.hashGrow(t *maptype, h *hmap)
@@ -582,6 +590,7 @@ func os.(f *File) read(b []byte) (n int, err error)
 func os.(f *File) Read(b []byte) (n int, err error)
 func os.(f *File) Close() error
 func os.NewFile(fd uintptr, name string) *File
+func os.fillFileStatFromSys(fs *fileStat, name string)
 
 // OS
 func os.init()
@@ -598,3 +607,19 @@ func unicode\utf8.DecodeRuneInString(s string) (r rune, size int)
 // Sorting
 // func (r reverse) Less(i, j int) bool
 func sort.reverse.Less(i, j int) bool
+
+
+#if GOVERSION >= 1.9
+	func runtime.recordForPanic(b []byte)
+	func runtime.nextFreeFast(s *mspan) gclinkptr
+	func runtime.additab(m *itab, locked, canfail bool)
+	func runtime.mapassign_faststr(t *maptype, h *hmap, ky string) unsafe.Pointer
+	func runtime.mapdelete_faststr(t *maptype, h *hmap, ky string)
+	func runtime.convT2E16(t *_type, elem unsafe.Pointer) (e eface)
+	func runtime.convT2E64(t *_type, elem unsafe.Pointer) (e eface)
+	func runtime.convT2I64(tab *itab, elem unsafe.Pointer) (i iface)
+	func runtime.exitsyscallfast_reacquired()
+	func runtime.convT2Estring(t *_type, elem unsafe.Pointer) (e eface)
+	func runtime.writebarrierptr_prewrite(dst *uintptr, src uintptr)
+	func runtime.writebarrierptr_prewrite1(dst *uintptr, src uintptr)
+#endif

@@ -226,3 +226,59 @@ backtrace_unwind(void *uc) {
 #endif
 	return;
 }
+
+int
+parse_golang_vernum(const char *str, unsigned int *result) {
+	unsigned int varnum = 0;
+	char sbuf[128], *ldec;
+
+	memset(sbuf, 0, sizeof(sbuf));
+	strncpy(sbuf, str, sizeof(sbuf)-1);
+
+	if (!(ldec = strchr(sbuf, '.'))) {
+		errno = 0;
+		varnum = strtoul(sbuf, NULL, 10);
+		if (errno)
+			return 0;
+
+		varnum *= 10000;
+	} else {
+		char *rdec;
+		unsigned int decno, rdecno = 0;
+
+		rdec = strrchr(sbuf, '.');
+		if (rdec && rdec != ldec)
+			*rdec++ = 0;
+		else
+			rdec = NULL;
+
+		*ldec++ = 0;
+
+		errno = 0;
+		varnum = strtoul(sbuf, NULL, 10);
+		if (errno)
+			return 0;
+
+		errno = 0;
+		decno = strtoul(ldec, NULL, 10);
+		if (errno)
+			return 0;
+
+		if (rdec) {
+			errno = 0;
+			rdecno = strtoul(rdec, NULL, 10);
+			if (errno)
+				return 0;
+		}
+
+		varnum *= 10000;
+		varnum += (decno * 100);
+		varnum += rdecno;
+	}
+
+	if (!varnum)
+		return 0;
+
+	*result = varnum;
+	return 1;
+}
