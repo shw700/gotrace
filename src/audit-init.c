@@ -85,7 +85,7 @@ static size_t get_symtab_size(const char *filename, size_t *strtab_size)
 	size_t sym_count;
 
 	if ((fd = open(filename, O_RDONLY)) < 0) {
-		PERROR("open");
+		PRINT_ERROR("open(%s): %s\n", filename, strerror(errno));
 		return 0;
 	}
 

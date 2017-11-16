@@ -19,7 +19,7 @@
 ZYDIS_LIB=./zydis/build/libZydis.a
 
 GOTRACE_BIN=gotrace
-GOTRACE_LDFLAGS=$(LDFLAGS) -Wl,--no-as-needed -Wl,--export-dynamic
+GOTRACE_LDFLAGS=$(LDFLAGS) -Wl,--no-as-needed -Wl,--export-dynamic -Wl,-rpath='.'
 #gcc -ggdb -O0 -Wall -D_GNU_SOURCE -Wl,--export-dynamic
 GOTRACE_LIBS=$(LIBS) $(LEXLIB) -ldl -lelf -lpthread $(ZYDIS_LIB)
 

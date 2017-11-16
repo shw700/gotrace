@@ -288,12 +288,12 @@ get_all_funcs_in_object(const char *filename) {
 	int fd, result = 0;
 
 	if ((fd = open(filename, O_RDONLY)) < 0) {
-		PERROR("open");
+		PRINT_ERROR("open(%s): %s\n", filename, strerror(errno));
 		return 0;
 	}
 
 	if (fstat(fd, &sb) < 0) {
-		PERROR("fstat");
+		PRINT_ERROR("fstat(%s): %s\n", filename, strerror(errno));
 		close(fd);
 		return 0;
 	}
