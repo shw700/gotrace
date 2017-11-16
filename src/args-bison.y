@@ -66,7 +66,7 @@ do { \
 %}
 
 
-%token NEWLINE NAME TYPE_PREFIX FILENAME FUNC STRUCT CONST IMPORT DEFINITION CONDITIONAL COND_VAR COND_EXPR COND_VAL END POINTER SLICE IGNORE
+%token NEWLINE NAME TYPE_PREFIX FILENAME FUNC STRUCT CONST IMPORT DEFINITION CONDITIONAL COND_VAR COND_EXPR COND_VAL END POINTER SLICE IGNORE NOFUNC
 
 %union
 {
@@ -79,6 +79,7 @@ do { \
 }
 
 %type <s>         NAME
+%type <s>         NOFUNC
 %type <s>         TYPE_PREFIX
 %type <s>         FUNC
 %type <s>         POINTER
@@ -109,6 +110,8 @@ entry cond_clause
 entry const_def
 |
 entry func_def
+|
+entry nofunc_def
 |
 entry import_def
 |
@@ -300,6 +303,24 @@ EMPTY_COMMA:
 
 
 /* function definitions */
+nofunc_def:
+NOFUNC
+{
+	char *openp, *ptr = $1;
+
+	while (isspace(*ptr))
+		ptr++;
+
+	if ((openp = strchr(ptr, '('))) {
+		char *close = strchr(openp, ')');
+
+		if (close && !close[1])
+			*openp = 0;
+	}
+
+	add_custom_exclusion(ptr);
+}
+
 func_def:
 XDEF '(' ARGS ')' XARGS
 {

@@ -97,6 +97,7 @@ vernum		[0-9]?\.[0-9]+(\.[0-9]+)?
 <<EOF>>			{ return END; }
 "struct"		{ return STRUCT; }
 "func"			{ return FUNC; }
+"nofunc"{whitespace}.+	{ lt_args_lval.s = strdup(lt_args_text+7); return NOFUNC; }
 {name}[!~^]?(\/[opxduh])?	{ lt_args_lval.s = strdup(lt_args_text); return NAME; }
 {type_prefix}		{ lt_args_lval.s = strdup(lt_args_text); return TYPE_PREFIX; }
 "\*"+			{ lt_args_lval.s = strdup(lt_args_text); return POINTER; }

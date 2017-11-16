@@ -87,41 +87,15 @@ struct lt_config_audit cfg;
 
 char gotrace_socket_path[128];
 
+typedef struct custom_exclusion {
+	struct custom_exclusion *next;
+	char pattern[0];
+} custom_exclusion_t;
+
+custom_exclusion_t *excluded_intercepts_custom = NULL;
 char *excluded_intercepts[] = {
 //	"main",		// RIP-relative addressing
-	"main.main",
-	"runtime.init.2",
-	"runtime.main",
-	"runtime.init",
-	"runtime.morestack",
-	"fmt.*[pP]rintln",
-	"fmt.\\(\\*pp\\).*",
-
 //	"runtime.checkASM",	// RIP-relative addressing
-	"runtime.morestack_noctxt",
-
-	"runtime.deferreturn",
-
-	"runtime.\\(\\*mcache\\).nextFree",
-	"runtime.mallocgc",
-	"runtime.newobject",
-	"runtime.\\(\\*mspan\\).nextFreeIndex",
-	"sync.\\(\\*Mutex\\).Lock",
-	"sync.\\(\\*Once\\).Do",
-	"syscall.Getenv",
-	"os.Getenv",
-	"internal/singleflight.\\(\\*Group\\).doCall",
-	"net.systemConf",
-	"net.initConfVal",
-	"net.goDebugNetDNS",
-	"net.\\(\\*Resolver\\).exchange",
-	"net.\\(\\*Resolver\\).tryOneName",
-	"net.\\(\\*Resolver\\).lookupIP",
-	"net.goDebugString",
-	"net.glob..func10",
-	"net.\\(\\*Resolver\\).goLookupIPCNAMEOrder.func1",
-	"net.\\(\\*Resolver\\).LookupIPAddr.func1",
-	"net.\\(\\*Resolver\\).\\(net.lookupIP\\)-fm",
 };
 
 pid_t master_pid = -1, socket_pid = -1;
@@ -445,32 +419,81 @@ start_listener(void) {
 	return;
 }
 
+void
+add_custom_exclusion(const char *pattern) {
+	custom_exclusion_t *exclusion;
+	size_t esize;
+
+	esize = sizeof(custom_exclusion_t) + strlen(pattern) + 1;
+
+	if (!(exclusion = malloc(esize))) {
+		PERROR("malloc");
+		exit(EXIT_FAILURE);
+	}
+
+	memset(exclusion, 0, esize);
+	strcpy(exclusion->pattern, pattern);
+
+	if (excluded_intercepts_custom)
+		exclusion->next = excluded_intercepts_custom;
+
+	excluded_intercepts_custom = exclusion;
+	return;
+}
+
 int
-is_intercept_excluded(const char *fname) {
-	size_t i;
+check_exclusion_pattern(const char *fname, const char *pattern) {
 
-	for (i = 0; i < sizeof(excluded_intercepts)/sizeof(excluded_intercepts[0]); i++) {
+	if (strstr(pattern, "*") || strstr(pattern, "?")) {
+		regex_t regex;
+		int iret;
 
-		if (strstr(excluded_intercepts[i], "*") || strstr(excluded_intercepts[i], "?")) {
-			regex_t regex;
-			int iret;
-
-			if (regcomp(&regex, excluded_intercepts[i], REG_EXTENDED)) {
-				PRINT_ERROR("Error compiling exclusion regex: %s\n", excluded_intercepts[i]);
-				exit(EXIT_FAILURE);
-				continue;
-			}
-
-			if (!(iret = regexec(&regex, fname, 0, NULL, 0))) {
-//				fprintf(stderr, "XXX regex exclusion match: %s | %s\n", excluded_intercepts[i], fname);
-				return 1;
-			}
-
-			regfree(&regex);
+		if (regcomp(&regex, pattern, REG_EXTENDED)) {
+			PRINT_ERROR("Error compiling exclusion regex: %s\n", pattern);
+			return -1;
 		}
 
-		if (!strcmp(fname, excluded_intercepts[i]))
+		if (!(iret = regexec(&regex, fname, 0, NULL, 0))) {
+//				fprintf(stderr, "XXX regex exclusion match: %s | %s\n", pattern, fname);
 			return 1;
+		}
+
+		regfree(&regex);
+	}
+
+	if (!strcmp(fname, pattern))
+		return 1;
+
+	return 0;
+}
+
+int
+is_intercept_excluded(const char *fname) {
+	custom_exclusion_t *excl = excluded_intercepts_custom;
+	size_t i;
+	int ret;
+
+	while (excl) {
+		ret = check_exclusion_pattern(fname, excl->pattern);
+
+		if (ret < 0) {
+			PRINT_ERROR("Error: exclusion pattern match failure encountered on: %s\n", excl->pattern);
+			exit(EXIT_FAILURE);
+		} else if (ret > 0)
+			return 1;
+
+		excl = excl->next;
+	}
+
+	for (i = 0; i < sizeof(excluded_intercepts)/sizeof(excluded_intercepts[0]); i++) {
+		ret = check_exclusion_pattern(fname, excluded_intercepts[i]);
+
+		if (ret < 0) {
+			PRINT_ERROR("Error: exclusion pattern match failure encountered on: %s\n", excluded_intercepts[i]);
+			exit(EXIT_FAILURE);
+		} else if (ret > 0)
+			return 1;
+
 	}
 
 	return 0;

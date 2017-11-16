@@ -3,6 +3,19 @@
 
 //#define GOVERSION	1.7.0
 
+nofunc main.main(\*)
+nofunc runtime.main
+nofunc runtime.init
+nofunc runtime.init.2
+nofunc runtime.morestack
+nofunc runtime.deferreturn
+nofunc runtime.morestack_noctxt
+
+#if GOVERSION < 1.7
+	nofunc fmt.*[pP]rintln
+	nofunc fmt.\(\*pp\).*
+#endif
+
 const mmap_prot (
 	PROT_NONE      = 0x0
 	PROT_READ      = 0x1
@@ -376,7 +389,7 @@ func runtime.gopreempt_m(gp *g)
 func runtime.preemptall() bool
 func runtime.goschedImpl(gp *g)
 //func runqgrab(_p_ *p, batch *[256]guintptr, batchHead uint32, stealRunNextG bool) uint32
-func runtime.runqgrab(_p_ *p, batch *guintptr, batchHead uint32, stealRunNextG bool) uint32
+func runtime.runqgrab~(_p_ *p, batch *guintptr, batchHead uint32, stealRunNextG bool) uint32
 func runtime.runqget(_p_ *p) (gp *g, inheritTime bool)
 func runtime.globrunqget(_p_ *p, max int32) *g
 func runtime.runqput(_p_ *p, gp *g, next bool)
@@ -386,6 +399,7 @@ func runtime.deferreturn(arg0 uintptr/p)
 func runtime.deferproc(siz int32, fn *funcval)
 func runtime.newdefer(siz int32) *_defer
 func runtime.freedefer(d *_defer)
+func runtime.save(pc, sp uintptr/p)
 //func mcall(fn func(*g))
 func runtime.mcall(fn pfn)
 func runtime.retake(now int64) uint32
@@ -610,6 +624,27 @@ func sort.reverse.Less(i, j int) bool
 
 
 #if GOVERSION >= 1.9
+	nofunc net.initConfVal
+	nofunc os.Getenv
+	nofunc syscall.Getenv
+	nofunc runtime.mallocgc
+	nofunc runtime.newobject
+	nofunc net.goDebugNetDNS
+	nofunc net.goDebugString
+	nofunc net.glob..func10()
+	nofunc sync.\(\*Mutex\).Lock
+	nofunc sync.\(\*Once\).Do
+	nofunc net.systemConf
+	nofunc net.\(\*Resolver\).lookupIP
+	nofunc net.\(\*Resolver\).exchange
+	nofunc net.\(\*Resolver\).tryOneName
+	nofunc net.\(\*Resolver\).goLookupIPCNAMEOrder.func1
+	nofunc net.\(\*Resolver\).LookupIPAddr.func1
+	nofunc net.\(\*Resolver\).\(net.lookupIP\)-fm
+	nofunc runtime.\(\*mcache\).nextFree
+	nofunc runtime.\(\*mspan\).nextFreeIndex
+	nofunc internal/singleflight.\(\*Group\).doCall
+
 	func runtime.recordForPanic(b []byte)
 	func runtime.nextFreeFast(s *mspan) gclinkptr
 	func runtime.additab(m *itab, locked, canfail bool)

@@ -279,6 +279,7 @@ struct lt_symbol* lt_symbol_get(struct lt_config_shared *cfg,
 /* tracer */
 char *call_remote_serializer(pid_t pid, const char *name, void *addr);
 const char *lookup_interface(pid_t pid, void *value, int is_typ);
+void add_custom_exclusion(const char *pattern);
 
 
 /* network */
