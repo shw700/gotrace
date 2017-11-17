@@ -17,15 +17,8 @@
 #include <zydis/include/Zydis/Zydis.h>
 
 
-int _gotrace_socket_fd = -1;
-
 int client_socket_loop(void *arg);
-//unsigned long set_intercept_redirect(void *addr, unsigned long *ptrapaddr);
-
 char *call_data_serializer(const char *dtype, void *addr);
-
-golang_func_t *all_gofuncs = NULL;
-
 
 typedef struct landing_pad {
 	size_t total_alloc;
@@ -35,6 +28,9 @@ typedef struct landing_pad {
 } landing_pad_t;
 
 landing_pad_t *landing_pads = NULL;
+
+golang_func_t *all_gofuncs = NULL;
+int _gotrace_socket_fd = -1;
 
 
 void
@@ -244,7 +240,6 @@ _gomod_init(void *data) {
 	memset(&s_un, 0, sizeof(s_un));
 	s_un.sun_family = AF_UNIX;
 	strncpy(s_un.sun_path, gotrace_socket_path, sizeof (s_un.sun_path));
-//	strncpy(s_un.sun_path, "/tmp/blabla.sock", sizeof (s_un.sun_path));
 	ssize = offsetof(struct sockaddr_un, sun_path) + strlen(s_un.sun_path);
 
 	if (connect(fd, (struct sockaddr *)&s_un, ssize) == -1) {
@@ -259,7 +254,7 @@ _gomod_init(void *data) {
 	char *stack;
 	int cpid, cflags = CLONE_FILES | CLONE_FS | CLONE_IO | CLONE_VM;
 
-	if ((stack = mmap(NULL, NEW_STACK_SIZE, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE|MAP_GROWSDOWN, 0, 0)) == MAP_FAILED) {
+	if ((stack = mmap(NULL, NEW_STACK_SIZE, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE|MAP_GROWSDOWN, -1, 0)) == MAP_FAILED) {
 		perror("mmap");
 		return -1;
 	}
@@ -267,21 +262,6 @@ _gomod_init(void *data) {
 	cpid = clone(client_socket_loop, stack+NEW_STACK_SIZE, cflags, (void *)((uintptr_t)fd));
 	fprintf(stderr, "clone() returned %d\n", cpid);
 
-/*	while (!client_loop_initialized) {
-		int hi = 0;
-		hi += 2;
-		hi += getpid();
-	}*/
-
 	fprintf(stderr, "Client injection module initialization complete.\n");
 	return cpid;
-}
-
-int somefunc(void) {
-	void *addr;
-	printf("We are in some func\n");
-	addr = dlsym(RTLD_DEFAULT, "main.main");
-	printf("addr = %p\n", addr);
-	printf("dl error = %s\n", dlerror());
-	return 0;
 }

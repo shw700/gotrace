@@ -1029,7 +1029,7 @@ get_remote_jmpbuf_space(pid_t pid, void *icode, size_t isize) {
 	void *result;
 
 	if (!alloc_space) {
-		if ((alloc_space = (void *)call_remote_mmap(pid, NULL, alloc_total, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_ANONYMOUS|MAP_PRIVATE, 0, 0)) == MAP_FAILED) {
+		if ((alloc_space = (void *)call_remote_mmap(pid, NULL, alloc_total, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0)) == MAP_FAILED) {
 			perror_pid("mmap", pid);
 			alloc_space = NULL;
 			return NULL;

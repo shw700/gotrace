@@ -117,7 +117,7 @@ map_closest_area(void *refaddr, size_t msize) {
 		if ((vmaps[i+1].start - vmaps[i].end) >= msize) {
 			void *base = (void *)vmaps[i+1].end;
 
-			if ((result = mmap(base, msize, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_ANONYMOUS|MAP_PRIVATE|MAP_FIXED, 0, 0)) == MAP_FAILED) {
+			if ((result = mmap(base, msize, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_ANONYMOUS|MAP_PRIVATE|MAP_FIXED, -1, 0)) == MAP_FAILED) {
 				char merrbuf[128];
 
 				snprintf(merrbuf, sizeof(merrbuf), "mmap(%p, ...)", base);

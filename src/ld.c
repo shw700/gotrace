@@ -390,7 +390,7 @@ get_remote_vma(pid_t pid, unsigned long base, size_t size, int prot, void *fixed
 		map_flags |= MAP_FIXED;
 	}
 
-	if ((vma = (void *)call_remote_mmap(pid, mbase, size, prot | PROT_WRITE | PROT_READ, map_flags, 0, 0)) == MAP_FAILED) {
+	if ((vma = (void *)call_remote_mmap(pid, mbase, size, prot | PROT_WRITE | PROT_READ, map_flags, -1, 0)) == MAP_FAILED) {
 		perror_pid("mmap", pid);
 		return NULL;
 	}
@@ -495,7 +495,7 @@ get_local_vma(unsigned long base, size_t size, int prot, void *fixed) {
 		map_flags |= MAP_FIXED;
 	}
 
-	if ((vma = mmap(mbase, size, prot | PROT_WRITE | PROT_READ, map_flags, 0, 0)) == MAP_FAILED) {
+	if ((vma = mmap(mbase, size, prot | PROT_WRITE | PROT_READ, map_flags, -1, 0)) == MAP_FAILED) {
 		PERROR("mmap");
 		return NULL;
 	}
@@ -1912,7 +1912,7 @@ alloc_memory_before_vma(pid_t pid, size_t nbytes) {
 		nbytes = (nbytes + 4095) & ~(4096-1);
 //		fprintf(stderr, "XXX: TRYING %zu @ %p\n", nbytes, (void *)base);
 
-		if ((ret = mmap((void *)base, nbytes, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_ANONYMOUS|MAP_PRIVATE, 0, 0)) == MAP_FAILED) {
+		if ((ret = mmap((void *)base, nbytes, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0)) == MAP_FAILED) {
 			PERROR("mmap");
 			break;
 		}

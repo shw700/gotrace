@@ -204,7 +204,7 @@ fabricate_fs_base(int alloc_new, void **mout) {
 //		perror("malloc");
 //		return NULL;
 //	}
-	if ((buf = mmap(NULL, BSIZE, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, 0, 0)) == MAP_FAILED) {
+	if ((buf = mmap(NULL, BSIZE, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0)) == MAP_FAILED) {
 		PERROR("mmap");
 		return NULL;
 	}
