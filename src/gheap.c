@@ -349,8 +349,8 @@ call_gofunc(void *addr, int set_new_fs, int no_ret, void *param, void **mout) {
 		return NULL;
 	}
 
+	memset(buf, 0, rlen+1);
 	strncpy(buf, result, rlen);
-	buf[rlen] = 0;
 
 	return buf;
 }

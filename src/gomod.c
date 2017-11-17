@@ -173,7 +173,8 @@ client_socket_loop(void *arg) {
 //				fprintf(stderr, "Loop serialized struct data: [%s]\n", sdata);
 				free(dbuf);
 
-				if (send_gt_msg(tid, fd, reqtype, sdata, strlen(sdata), first) < 0) {
+				// Send null byte so the remote side receives it null-terminated.
+				if (send_gt_msg(tid, fd, reqtype, sdata, strlen(sdata)+1, first) < 0) {
 					fprintf(stderr, "Unexpected error sending back response body data on gotrace control socket.\n");
 					free(sdata);
 					break;
